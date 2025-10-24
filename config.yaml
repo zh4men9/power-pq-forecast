@@ -4,7 +4,7 @@
 # 数据配置
 data:
   data_path: "data/raw"
-  file_pattern: "*.xlsx"  # 或 "*.csv"
+  file_pattern: "*.csv"  # 或 "*.csv"
   time_col: null  # 自动检测，如需指定则填写列名
   p_col: null     # 自动检测，如需指定则填写列名
   q_col: null     # 自动检测，如需指定则填写列名

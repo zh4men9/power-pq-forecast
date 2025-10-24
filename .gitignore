@@ -207,6 +207,6 @@ marimo/_lsp/
 __marimo__/
 
 # Project specific
-data/raw/*.xlsx
-data/raw/*.csv
 outputs/
+
+.DS_Store
