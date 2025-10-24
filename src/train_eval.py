@@ -294,9 +294,10 @@ def run_evaluation(config: Config, df: pd.DataFrame) -> pd.DataFrame:
     max_lag = config.get('features', 'max_lag', default=24)
     roll_windows = config.get('features', 'roll_windows', default=[6, 12, 24])
     use_time_features = config.get('features', 'use_time_features', default=True)
+    exog_cols = config.get('features', 'exog_cols', default=[])
     
     X, Y = create_features(df, max_lag=max_lag, roll_windows=roll_windows, 
-                          use_time_features=use_time_features)
+                          use_time_features=use_time_features, exog_cols=exog_cols)
     
     # For each horizon
     for horizon in horizons:

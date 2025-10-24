@@ -71,6 +71,7 @@ def load_data(
     time_col: Optional[str] = None,
     p_col: Optional[str] = None,
     q_col: Optional[str] = None,
+    exog_cols: Optional[list] = None,
     freq: Optional[str] = None,
     tz: Optional[str] = None,
     interp_limit: int = 3
@@ -83,12 +84,13 @@ def load_data(
         time_col: Time column name (auto-detect if None)
         p_col: Active power column name (auto-detect if None)
         q_col: Reactive power column name (auto-detect if None)
+        exog_cols: List of exogenous variable column names (optional)
         freq: Resampling frequency (e.g., 'H', '15T')
         tz: Timezone
         interp_limit: Maximum consecutive NaN values to interpolate
     
     Returns:
-        DataFrame with DatetimeIndex and columns ['P', 'Q']
+        DataFrame with DatetimeIndex and columns ['P', 'Q', ...exog_cols]
     """
     path = Path(file_path)
     
@@ -125,7 +127,18 @@ def load_data(
         print(f"Auto-detected Q column: {q_col}")
     
     # Extract relevant columns
-    df = df[[time_col, p_col, q_col]].copy()
+    cols_to_keep = [time_col, p_col, q_col]
+    
+    # Add exogenous columns if specified
+    if exog_cols:
+        for col in exog_cols:
+            if col not in df.columns:
+                print(f"Warning: Exogenous column '{col}' not found in data, skipping")
+            else:
+                cols_to_keep.append(col)
+        print(f"Using exogenous columns: {[c for c in exog_cols if c in df.columns]}")
+    
+    df = df[cols_to_keep].copy()
     
     # Convert time column to datetime
     df[time_col] = pd.to_datetime(df[time_col])
@@ -138,7 +151,8 @@ def load_data(
         df.index = df.index.tz_localize(tz)
     
     # Rename columns to standard names
-    df.rename(columns={p_col: 'P', q_col: 'Q'}, inplace=True)
+    rename_dict = {p_col: 'P', q_col: 'Q'}
+    df.rename(columns=rename_dict, inplace=True)
     
     # Sort by time
     df.sort_index(inplace=True)
@@ -149,16 +163,20 @@ def load_data(
     
     # Interpolate short gaps only
     if interp_limit > 0:
-        df['P'] = df['P'].interpolate(method='linear', limit=interp_limit, limit_area='inside')
-        df['Q'] = df['Q'].interpolate(method='linear', limit=interp_limit, limit_area='inside')
+        for col in df.columns:
+            df[col] = df[col].interpolate(method='linear', limit=interp_limit, limit_area='inside')
     
     # Ensure numeric types
-    df['P'] = pd.to_numeric(df['P'], errors='coerce')
-    df['Q'] = pd.to_numeric(df['Q'], errors='coerce')
+    for col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
     
     print(f"Loaded data shape: {df.shape}")
     print(f"Date range: {df.index.min()} to {df.index.max()}")
     print(f"Missing values - P: {df['P'].isna().sum()}, Q: {df['Q'].isna().sum()}")
+    if exog_cols:
+        for col in df.columns:
+            if col not in ['P', 'Q']:
+                print(f"Missing values - {col}: {df[col].isna().sum()}")
     
     return df
 

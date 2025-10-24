@@ -22,6 +22,8 @@ features:
   use_time_features: true    # 是否使用时间特征（小时、星期、月份）
   sequence_length: 24        # 深度学习模型的序列长度
   season_length: 24          # 季节周期长度（用于季节朴素基线）
+  exog_cols: []              # 外生变量列表（例如：['定子电流', '定子电压', '转子电压', '转子电流']）
+                             # 留空时只使用P和Q进行预测
 
 # 评估配置
 evaluation:
@@ -88,13 +90,13 @@ models:
 # 图形配置
 plotting:
   fig_dpi: 150
-  font_priority:        # 中文字体优先列表
-    - SimHei
-    - STHeiti
-    - WenQuanYi Micro Hei
-    - Noto Sans CJK SC
-    - Microsoft YaHei
-    - PingFang SC
-    - Heiti SC
-    - DejaVu Sans
-    - Arial Unicode MS
+  font_priority:        # 中文字体优先列表 (跨平台支持 Windows/macOS/Linux)
+    - SimHei            # Windows 黑体
+    - Microsoft YaHei   # Windows 微软雅黑
+    - STHeiti           # macOS 华文黑体
+    - PingFang SC       # macOS 苹方-简
+    - Heiti SC          # macOS 黑体-简
+    - WenQuanYi Micro Hei  # Linux 文泉驿微米黑
+    - Noto Sans CJK SC  # Linux/跨平台 思源黑体
+    - DejaVu Sans       # 通用后备字体
+    - Arial Unicode MS  # 通用后备字体

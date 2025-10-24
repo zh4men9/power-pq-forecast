@@ -8,54 +8,65 @@ import numpy as np
 from typing import Tuple, List
 
 
-def create_lag_features(df: pd.DataFrame, max_lag: int = 24) -> pd.DataFrame:
+def create_lag_features(df: pd.DataFrame, max_lag: int = 24, target_cols: List[str] = None) -> pd.DataFrame:
     """
-    Create lag features for P and Q
+    Create lag features for specified columns
     IMPORTANT: Uses shift() to ensure only past values are used
     
     Args:
-        df: DataFrame with P and Q columns
+        df: DataFrame with columns to create lags for
         max_lag: Maximum lag to create
+        target_cols: List of columns to create lags for (default: ['P', 'Q'])
     
     Returns:
         DataFrame with lag features
     """
+    if target_cols is None:
+        target_cols = ['P', 'Q']
+    
     features = df.copy()
     
-    for col in ['P', 'Q']:
-        for lag in range(1, max_lag + 1):
-            features[f'{col}_lag_{lag}'] = df[col].shift(lag)
+    for col in target_cols:
+        if col in df.columns:
+            for lag in range(1, max_lag + 1):
+                features[f'{col}_lag_{lag}'] = df[col].shift(lag)
     
     return features
 
 
 def create_rolling_features(
     df: pd.DataFrame,
-    windows: List[int] = [6, 12, 24]
+    windows: List[int] = [6, 12, 24],
+    target_cols: List[str] = None
 ) -> pd.DataFrame:
     """
     Create rolling statistics features
     IMPORTANT: Uses rolling() with only past values
     
     Args:
-        df: DataFrame with P and Q columns
+        df: DataFrame with columns to create rolling features for
         windows: List of window sizes
+        target_cols: List of columns to create rolling features for (default: ['P', 'Q'])
     
     Returns:
         DataFrame with rolling features
     """
+    if target_cols is None:
+        target_cols = ['P', 'Q']
+    
     features = df.copy()
     
-    for col in ['P', 'Q']:
-        for window in windows:
-            # Rolling mean
-            features[f'{col}_roll_mean_{window}'] = df[col].shift(1).rolling(window).mean()
-            # Rolling std
-            features[f'{col}_roll_std_{window}'] = df[col].shift(1).rolling(window).std()
-            # Rolling min
-            features[f'{col}_roll_min_{window}'] = df[col].shift(1).rolling(window).min()
-            # Rolling max
-            features[f'{col}_roll_max_{window}'] = df[col].shift(1).rolling(window).max()
+    for col in target_cols:
+        if col in df.columns:
+            for window in windows:
+                # Rolling mean
+                features[f'{col}_roll_mean_{window}'] = df[col].shift(1).rolling(window).mean()
+                # Rolling std
+                features[f'{col}_roll_std_{window}'] = df[col].shift(1).rolling(window).std()
+                # Rolling min
+                features[f'{col}_roll_min_{window}'] = df[col].shift(1).rolling(window).min()
+                # Rolling max
+                features[f'{col}_roll_max_{window}'] = df[col].shift(1).rolling(window).max()
     
     return features
 
@@ -94,38 +105,52 @@ def create_features(
     df: pd.DataFrame,
     max_lag: int = 24,
     roll_windows: List[int] = [6, 12, 24],
-    use_time_features: bool = True
+    use_time_features: bool = True,
+    exog_cols: List[str] = None
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Create all features for time series forecasting
     CRITICAL: Ensures no future information leakage
     
     Args:
-        df: DataFrame with P and Q columns and DatetimeIndex
+        df: DataFrame with P and Q columns (and optional exogenous columns) and DatetimeIndex
         max_lag: Maximum lag for lag features
         roll_windows: Window sizes for rolling statistics
         use_time_features: Whether to include time features
+        exog_cols: List of exogenous variable column names to include in features
     
     Returns:
         Tuple of (X features DataFrame, Y targets DataFrame)
     """
-    # Start with original data
-    features = df[['P', 'Q']].copy()
+    # Start with P and Q (always present)
+    base_cols = ['P', 'Q']
+    
+    # Add exogenous columns if specified
+    feature_cols = base_cols.copy()
+    if exog_cols:
+        for col in exog_cols:
+            if col in df.columns:
+                feature_cols.append(col)
+            else:
+                print(f"Warning: Exogenous column '{col}' not found in dataframe, skipping")
+    
+    # Start with the relevant columns
+    features = df[feature_cols].copy()
     
     # Add lag features (shifts ensure no future info)
-    features = create_lag_features(features, max_lag)
+    features = create_lag_features(features, max_lag, target_cols=feature_cols)
     
     # Add rolling features (shift+rolling ensures no future info)
-    features = create_rolling_features(features, roll_windows)
+    features = create_rolling_features(features, roll_windows, target_cols=feature_cols)
     
     # Add time features (inherently no future info)
     if use_time_features:
         features = create_time_features(features)
     
     # Separate features (X) and targets (Y)
-    # Remove original P and Q from features as they would cause leakage
-    X = features.drop(['P', 'Q'], axis=1)
-    Y = features[['P', 'Q']]
+    # Remove original columns from features as they would cause leakage
+    X = features.drop(feature_cols, axis=1)
+    Y = features[base_cols]  # Only P and Q are targets
     
     # Drop rows with NaN (from lagging/rolling)
     valid_idx = X.notna().all(axis=1) & Y.notna().all(axis=1)
@@ -136,6 +161,8 @@ def create_features(
     print(f"  X shape: {X.shape}")
     print(f"  Y shape: {Y.shape}")
     print(f"  Features: lag (up to {max_lag}), rolling (windows {roll_windows}), time features: {use_time_features}")
+    if exog_cols:
+        print(f"  Exogenous variables used: {[c for c in exog_cols if c in df.columns]}")
     
     return X, Y
 
