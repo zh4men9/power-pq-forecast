@@ -21,6 +21,7 @@ features:
   use_time_features: true
   sequence_length: 12    # 减少序列长度
   season_length: 24
+  exog_cols: []          # 外生变量列表（留空或添加外生变量）
 
 # 评估配置
 evaluation:

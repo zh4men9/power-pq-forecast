@@ -22,12 +22,12 @@ def configure_chinese_fonts(font_priority: Optional[List[str]] = None):
     if font_priority is None:
         font_priority = [
             'SimHei',              # Windows
-            'STHeiti',             # macOS
-            'WenQuanYi Micro Hei', # Linux
-            'Noto Sans CJK SC',    # Linux/Cross-platform
             'Microsoft YaHei',     # Windows
+            'STHeiti',             # macOS
             'PingFang SC',         # macOS
             'Heiti SC',            # macOS
+            'WenQuanYi Micro Hei', # Linux
+            'Noto Sans CJK SC',    # Linux/Cross-platform
             'DejaVu Sans',         # Fallback
             'Arial Unicode MS'     # Fallback
         ]
@@ -35,6 +35,10 @@ def configure_chinese_fonts(font_priority: Optional[List[str]] = None):
     matplotlib.rcParams['font.sans-serif'] = font_priority
     matplotlib.rcParams['axes.unicode_minus'] = False  # Fix minus sign display
     matplotlib.rcParams['font.size'] = 10
+    
+    # Suppress font warnings in headless environments
+    import warnings
+    warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
 
 
 def plot_overview(

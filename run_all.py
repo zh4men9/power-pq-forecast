@@ -62,6 +62,7 @@ def main():
         time_col=config.get('data', 'time_col'),
         p_col=config.get('data', 'p_col'),
         q_col=config.get('data', 'q_col'),
+        exog_cols=config.get('features', 'exog_cols', default=[]),
         freq=config.get('data', 'freq'),
         tz=config.get('data', 'tz'),
         interp_limit=config.get('data', 'interp_limit', default=3)
