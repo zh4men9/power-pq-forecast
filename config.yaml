@@ -1,0 +1,100 @@
+# 电力质量预测项目配置文件
+# Power Quality Forecasting Configuration
+
+# 数据配置
+data:
+  data_path: "data/raw"
+  file_pattern: "*.xlsx"  # 或 "*.csv"
+  time_col: null  # 自动检测，如需指定则填写列名
+  p_col: null     # 自动检测，如需指定则填写列名
+  q_col: null     # 自动检测，如需指定则填写列名
+  freq: "H"       # 时间频率: H=小时, D=日, W=周, M=月, T=分钟, 15T=15分钟
+  tz: null        # 时区，如 "Asia/Shanghai"
+  interp_limit: 3 # 短缺口插值最大步数
+
+# 特征工程配置
+features:
+  max_lag: 24           # 最大滞后步数
+  roll_windows:         # 滚动窗口大小
+    - 6
+    - 12
+    - 24
+  use_time_features: true    # 是否使用时间特征（小时、星期、月份）
+  sequence_length: 24        # 深度学习模型的序列长度
+  season_length: 24          # 季节周期长度（用于季节朴素基线）
+
+# 评估配置
+evaluation:
+  horizons:             # 预测步长列表
+    - 1
+    - 12
+    - 24
+  test_window: 100      # 测试窗口大小
+  n_splits: 3           # 交叉验证折数
+  metrics:              # 评估指标
+    - RMSE
+    - MAE
+    - SMAPE
+    - WAPE
+
+# 模型配置
+models:
+  # 朴素基线
+  naive:
+    enabled: true
+  
+  # 季节朴素基线
+  seasonal_naive:
+    enabled: true
+  
+  # 随机森林
+  rf:
+    enabled: true
+    n_estimators: 100
+    max_depth: null
+    n_jobs: -1
+  
+  # XGBoost
+  xgb:
+    enabled: true
+    n_estimators: 100
+    max_depth: 6
+    learning_rate: 0.1
+    n_jobs: -1
+  
+  # LSTM
+  lstm:
+    enabled: true
+    hidden_size: 64
+    num_layers: 2
+    dropout: 0.2
+    epochs: 50
+    batch_size: 32
+    learning_rate: 0.001
+  
+  # Transformer
+  transformer:
+    enabled: true
+    d_model: 64
+    nhead: 4
+    num_encoder_layers: 2
+    num_decoder_layers: 2
+    dim_feedforward: 256
+    dropout: 0.1
+    epochs: 50
+    batch_size: 32
+    learning_rate: 0.001
+
+# 图形配置
+plotting:
+  fig_dpi: 150
+  font_priority:        # 中文字体优先列表
+    - SimHei
+    - STHeiti
+    - WenQuanYi Micro Hei
+    - Noto Sans CJK SC
+    - Microsoft YaHei
+    - PingFang SC
+    - Heiti SC
+    - DejaVu Sans
+    - Arial Unicode MS
