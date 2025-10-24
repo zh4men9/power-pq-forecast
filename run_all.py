@@ -19,8 +19,8 @@ def main():
     """Main execution function"""
     # Parse arguments
     parser = argparse.ArgumentParser(description='电力质量预测项目 - 一键运行脚本')
-    parser.add_argument('--config', type=str, default='config.yaml',
-                       help='配置文件路径 (默认: config.yaml)')
+    parser.add_argument('--config', type=str, default='config_exog.yaml',
+                       help='配置文件路径 (默认: config_exog.yaml)')
     args = parser.parse_args()
     
     # Load configuration
