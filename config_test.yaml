@@ -1,0 +1,86 @@
+# 测试配置文件 - 更快的运行速度
+# Test Configuration - Faster execution
+
+# 数据配置
+data:
+  data_path: "data/raw"
+  file_pattern: "*.xlsx"
+  time_col: null
+  p_col: null
+  q_col: null
+  freq: "h"  # 使用小写h避免警告
+  tz: null
+  interp_limit: 3
+
+# 特征工程配置
+features:
+  max_lag: 12           # 减少到12以加快速度
+  roll_windows:
+    - 6
+    - 12
+  use_time_features: true
+  sequence_length: 12    # 减少序列长度
+  season_length: 24
+
+# 评估配置
+evaluation:
+  horizons:             # 只测试2个步长
+    - 1
+    - 12
+  test_window: 50       # 减小测试窗口
+  n_splits: 2           # 减少折数
+  metrics:
+    - RMSE
+    - MAE
+    - SMAPE
+    - WAPE
+
+# 模型配置
+models:
+  naive:
+    enabled: true
+  
+  seasonal_naive:
+    enabled: true
+  
+  rf:
+    enabled: true
+    n_estimators: 50    # 减少树的数量
+    max_depth: 10
+    n_jobs: -1
+  
+  xgb:
+    enabled: true
+    n_estimators: 50    # 减少树的数量
+    max_depth: 4
+    learning_rate: 0.1
+    n_jobs: -1
+  
+  lstm:
+    enabled: false      # 禁用以加快测试
+    hidden_size: 32
+    num_layers: 1
+    dropout: 0.1
+    epochs: 10
+    batch_size: 32
+    learning_rate: 0.001
+  
+  transformer:
+    enabled: false      # 禁用以加快测试
+    d_model: 32
+    nhead: 2
+    num_encoder_layers: 1
+    num_decoder_layers: 1
+    dim_feedforward: 128
+    dropout: 0.1
+    epochs: 10
+    batch_size: 32
+    learning_rate: 0.001
+
+# 图形配置
+plotting:
+  fig_dpi: 100          # 降低DPI加快渲染
+  font_priority:
+    - DejaVu Sans
+    - SimHei
+    - Arial
