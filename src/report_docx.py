@@ -110,17 +110,65 @@ def generate_word_report(
     
     doc.add_paragraph()
     
-    # Section 2: Methodology
-    add_heading_with_style(doc, '二、评估方法', level=1)
+    # Section 2: Model descriptions
+    add_heading_with_style(doc, '二、模型介绍', level=1)
     
-    add_heading_with_style(doc, '2.1 验证策略', level=2)
+    doc.add_paragraph('本项目采用六种不同类型的预测模型，涵盖基线方法、传统机器学习和深度学习方法：')
+    doc.add_paragraph()
+    
+    add_heading_with_style(doc, '2.1 朴素预测（Naive）', level=2)
+    doc.add_paragraph(
+        '朴素预测是最简单的基线模型，使用最后一个观测值作为未来所有时间步的预测值。'
+        '虽然方法简单，但在许多实际应用中表现出色，常作为其他模型的基准对比。'
+    )
+    
+    add_heading_with_style(doc, '2.2 季节朴素预测（Seasonal Naive）', level=2)
+    doc.add_paragraph(
+        '季节朴素预测考虑了数据的季节性特征，使用上一个季节周期对应时刻的观测值进行预测。'
+        '适用于具有明显周期性模式的时间序列数据，如电力负荷的日周期或周周期特性。'
+    )
+    
+    add_heading_with_style(doc, '2.3 随机森林（Random Forest）', level=2)
+    doc.add_paragraph(
+        '随机森林是一种集成学习方法，通过构建多个决策树并综合其预测结果来提高模型的准确性和稳定性。'
+        '该模型能够自动捕获特征之间的非线性关系，并提供特征重要性分析，具有较强的泛化能力和抗过拟合能力。'
+    )
+    
+    add_heading_with_style(doc, '2.4 XGBoost', level=2)
+    doc.add_paragraph(
+        'XGBoost是一种高效的梯度提升决策树算法，通过迭代方式构建多个弱学习器并加权组合。'
+        '相比随机森林，XGBoost在处理大规模数据时性能更优，且能够更好地处理缺失值和异常值。'
+        '该算法在各类机器学习竞赛中表现优异，广泛应用于时间序列预测任务。'
+    )
+    
+    add_heading_with_style(doc, '2.5 LSTM（长短期记忆网络）', level=2)
+    doc.add_paragraph(
+        'LSTM是一种特殊的循环神经网络（RNN），专门设计用于处理序列数据和长期依赖问题。'
+        '通过引入门控机制（输入门、遗忘门、输出门），LSTM能够有效捕获时间序列中的长期依赖关系，'
+        '避免了传统RNN的梯度消失问题。适用于复杂的时序模式识别和多步预测任务。'
+    )
+    
+    add_heading_with_style(doc, '2.6 Transformer', level=2)
+    doc.add_paragraph(
+        'Transformer基于自注意力机制（Self-Attention），摒弃了传统的循环结构，能够并行处理序列数据。'
+        '通过多头注意力机制，模型可以同时关注序列中不同位置的信息，捕获长距离依赖关系。'
+        '位置编码（Positional Encoding）保留了序列的时序信息。相比LSTM，Transformer在处理长序列时更加高效，'
+        '并在自然语言处理和时间序列预测等领域取得了显著成果。'
+    )
+    
+    doc.add_paragraph()
+    
+    # Section 3: Methodology
+    add_heading_with_style(doc, '三、评估方法', level=1)
+    
+    add_heading_with_style(doc, '3.1 验证策略', level=2)
     doc.add_paragraph(
         '本项目采用滚动起点交叉验证（Rolling Origin Cross-Validation）方法，'
         '确保训练集始终位于测试集之前，严格避免使用未来信息进行训练。'
         '此方法是时间序列预测的标准验证方式，符合实际应用场景。'
     )
     
-    add_heading_with_style(doc, '2.2 评估指标', level=2)
+    add_heading_with_style(doc, '3.2 评估指标', level=2)
     doc.add_paragraph('本项目采用以下四项指标综合评估模型性能：')
     
     metrics_list = [
@@ -138,15 +186,15 @@ def generate_word_report(
         '配合RMSE和MAE作为绝对误差指标，形成完整的评估体系。'
     )
     
-    # Section 3: Results
-    add_heading_with_style(doc, '三、评估结果', level=1)
+    # Section 4: Results
+    add_heading_with_style(doc, '四、评估结果', level=1)
     
     horizons = sorted(agg_results['horizon'].unique())
     targets = ['P', 'Q']
     target_names = {'P': '有功功率', 'Q': '无功功率'}
     
     for target in targets:
-        add_heading_with_style(doc, f'3.{targets.index(target) + 1} {target_names[target]}预测结果', level=2)
+        add_heading_with_style(doc, f'4.{targets.index(target) + 1} {target_names[target]}预测结果', level=2)
         
         target_data = agg_results[agg_results['target'] == target]
         
@@ -169,7 +217,7 @@ def generate_word_report(
             add_table_from_dataframe(doc, pivot_data)
     
     # Add error by horizon figure
-    add_heading_with_style(doc, '3.3 预测步长误差变化图', level=2)
+    add_heading_with_style(doc, '4.3 预测步长误差变化图', level=2)
     
     error_fig_path = Path(figures_dir) / 'error_by_horizon.png'
     if error_fig_path.exists():
@@ -179,10 +227,10 @@ def generate_word_report(
     else:
         doc.add_paragraph('注: 误差变化图未生成')
     
-    # Section 4: Conclusions
-    add_heading_with_style(doc, '四、结论与建议', level=1)
+    # Section 5: Conclusions
+    add_heading_with_style(doc, '五、结论与建议', level=1)
     
-    add_heading_with_style(doc, '4.1 主要发现', level=2)
+    add_heading_with_style(doc, '5.1 主要发现', level=2)
     
     # Find best models
     for target in targets:
@@ -197,13 +245,13 @@ def generate_word_report(
                 style='List Number'
             )
     
-    add_heading_with_style(doc, '4.2 基线对比', level=2)
+    add_heading_with_style(doc, '5.2 基线对比', level=2)
     doc.add_paragraph(
         '所有模型均与朴素基线（Naive）和季节性朴素基线（SeasonalNaive）进行对比。'
         '只有在各项指标上显著优于基线的模型才具有实际应用价值。'
     )
     
-    add_heading_with_style(doc, '4.3 建议', level=2)
+    add_heading_with_style(doc, '5.3 建议', level=2)
     
     recommendations = [
         '模型选择应综合考虑预测精度、计算成本和可解释性',
@@ -215,15 +263,15 @@ def generate_word_report(
     for rec in recommendations:
         doc.add_paragraph(rec, style='List Number')
     
-    # Section 5: Appendix
-    add_heading_with_style(doc, '五、附录', level=1)
+    # Section 6: Appendix
+    add_heading_with_style(doc, '六、附录', level=1)
     
-    add_heading_with_style(doc, '5.1 数据说明', level=2)
+    add_heading_with_style(doc, '6.1 数据说明', level=2)
     doc.add_paragraph('数据来源: 电力系统监测数据', style='List Bullet')
     doc.add_paragraph('包含变量: 有功功率（P）、无功功率（Q）', style='List Bullet')
     doc.add_paragraph('时间粒度: 根据配置文件设定', style='List Bullet')
     
-    add_heading_with_style(doc, '5.2 可复现性', level=2)
+    add_heading_with_style(doc, '6.2 可复现性', level=2)
     doc.add_paragraph(f'配置文件: {config_path}', style='List Bullet')
     doc.add_paragraph('详细指标: outputs/metrics/cv_metrics.csv', style='List Bullet')
     doc.add_paragraph('图表目录: outputs/figures/', style='List Bullet')
