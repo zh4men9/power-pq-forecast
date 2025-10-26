@@ -1,0 +1,97 @@
+data:
+  data_path: data/raw
+  file_pattern: '*.csv'
+  freq: H
+  imputation:
+    method: nearest_p
+    target_p_value: 280.0
+  interp_limit: 3
+  p_col: 有功
+  q_col: 无功
+  time_col: 时间
+  tz: null
+evaluation:
+  horizons:
+  - 1
+  metrics:
+  - RMSE
+  - MAE
+  - SMAPE
+  - WAPE
+  - ACC
+  n_splits: 2
+  test_window: 50
+features:
+  exog_cols:
+  - 定子电流
+  - 定子电压
+  - 转子电压
+  - 转子电流
+  - 励磁电流
+  max_lag: 24
+  roll_windows:
+  - 6
+  - 12
+  - 24
+  season_length: 24
+  sequence_length: 24
+  use_time_features: true
+forecast:
+  best_model: Transformer
+  enabled: true
+  end_date: '2025-10-20'
+  start_date: '2025-10-20'
+models:
+  lstm:
+    batch_size: 32
+    dropout: 0.2
+    enabled: true
+    epochs: 1
+    hidden_size: 32
+    learning_rate: 0.001
+    num_layers: 1
+  naive:
+    enabled: true
+  rf:
+    enabled: true
+    max_depth: null
+    n_estimators: 50
+    n_jobs: -1
+  seasonal_naive:
+    enabled: true
+  transformer:
+    batch_size: 32
+    d_model: 32
+    dim_feedforward: 128
+    dropout: 0.1
+    enabled: true
+    epochs: 1
+    learning_rate: 0.001
+    nhead: 2
+    num_decoder_layers: 1
+    num_encoder_layers: 1
+  xgb:
+    enabled: true
+    learning_rate: 0.1
+    max_depth: 6
+    n_estimators: 50
+    n_jobs: -1
+plotting:
+  fig_dpi: 100
+  font_priority:
+  - SimHei
+  - Microsoft YaHei
+  - STHeiti
+  - PingFang SC
+  - Heiti SC
+  - WenQuanYi Micro Hei
+  - Noto Sans CJK SC
+  - DejaVu Sans
+  - Arial Unicode MS
+report:
+  generate_markdown: true
+  generate_word: true
+  include_forecast_table: true
+target:
+  predict_p: true
+  predict_q: false

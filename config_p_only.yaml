@@ -1,0 +1,129 @@
+# 电力有功预测项目配置文件 - 仅预测有功功率
+# Power Forecasting Configuration - Active Power Only
+
+# 数据配置
+data:
+  data_path: "data/raw"
+  file_pattern: "*.csv"
+  time_col: "时间"
+  p_col: "有功"
+  q_col: "无功"  # 仍然加载，但仅用于缺失值填补
+  freq: "H"
+  tz: null
+  interp_limit: 3
+  # 缺失值填补配置
+  imputation:
+    method: "nearest_p"  # 使用有功接近280的数据填充
+    target_p_value: 280  # 目标有功功率值
+
+# 预测目标配置
+target:
+  predict_p: true   # 预测有功功率
+  predict_q: false  # 不预测无功功率
+
+# 特征工程配置
+features:
+  max_lag: 24
+  roll_windows:
+    - 6
+    - 12
+    - 24
+  use_time_features: true
+  sequence_length: 24
+  season_length: 24
+  exog_cols:  # 使用电气特征作为外生变量
+    - '定子电流'
+    - '定子电压'
+    - '转子电压'
+    - '转子电流'
+    - '励磁电流'
+
+# 评估配置
+evaluation:
+  horizons:
+    - 1
+    - 12
+    - 24
+  test_window: 100
+  n_splits: 3
+  metrics:
+    - RMSE
+    - MAE
+    - SMAPE
+    - WAPE
+    - ACC   # 近似准确率
+
+# 模型配置
+models:
+  # 朴素基线
+  naive:
+    enabled: true
+  
+  # 季节朴素基线
+  seasonal_naive:
+    enabled: true
+  
+  # 随机森林
+  rf:
+    enabled: true
+    n_estimators: 100
+    max_depth: null
+    n_jobs: -1
+  
+  # XGBoost
+  xgb:
+    enabled: true
+    n_estimators: 100
+    max_depth: 6
+    learning_rate: 0.1
+    n_jobs: -1
+  
+  # LSTM
+  lstm:
+    enabled: true
+    hidden_size: 64
+    num_layers: 2
+    dropout: 0.2
+    epochs: 50
+    batch_size: 32
+    learning_rate: 0.001
+  
+  # Transformer
+  transformer:
+    enabled: true
+    d_model: 64
+    nhead: 4
+    num_encoder_layers: 2
+    num_decoder_layers: 2
+    dim_feedforward: 256
+    dropout: 0.1
+    epochs: 50
+    batch_size: 32
+    learning_rate: 0.001
+
+# 预测配置
+forecast:
+  enabled: true
+  start_date: "2025-10-20"
+  end_date: "2025-10-22"
+  best_model: "Transformer"  # 使用效果最好的模型
+
+# 图形配置
+plotting:
+  fig_dpi: 150
+  font_priority:
+    - SimHei
+    - Microsoft YaHei
+    - STHeiti
+    - PingFang SC
+    - Heiti SC
+    - WenQuanYi Micro Hei
+    - Noto Sans CJK SC
+    - DejaVu Sans
+    - Arial Unicode MS
+
+# 报告配置
+report:
+  generate_word: true      # 生成Word报告
+  generate_markdown: true  # 生成Markdown报告
+  include_forecast_table: true  # 包含预测结果表格

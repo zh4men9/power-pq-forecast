@@ -5,7 +5,7 @@ Automatically detects column names, handles time indexing, resampling, and inter
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional, Dict, List
 import warnings
 
 
@@ -66,31 +66,86 @@ def detect_pq_columns(df: pd.DataFrame) -> Tuple[Optional[str], Optional[str]]:
     return p_col, q_col
 
 
-def load_data(
-    file_path: str,
-    time_col: Optional[str] = None,
-    p_col: Optional[str] = None,
-    q_col: Optional[str] = None,
-    exog_cols: Optional[list] = None,
-    freq: Optional[str] = None,
-    tz: Optional[str] = None,
-    interp_limit: int = 3
-) -> pd.DataFrame:
+def impute_missing_by_nearest_p(df: pd.DataFrame, target_p: float = 280.0) -> pd.DataFrame:
     """
-    Load power quality data from Excel or CSV file
+    填补缺失值：使用有功功率接近target_p的行的特征值
     
     Args:
-        file_path: Path to data file
-        time_col: Time column name (auto-detect if None)
-        p_col: Active power column name (auto-detect if None)
-        q_col: Reactive power column name (auto-detect if None)
-        exog_cols: List of exogenous variable column names (optional)
-        freq: Resampling frequency (e.g., 'H', '15T')
-        tz: Timezone
-        interp_limit: Maximum consecutive NaN values to interpolate
+        df: DataFrame with P, Q and other columns
+        target_p: 目标有功功率值
     
     Returns:
-        DataFrame with DatetimeIndex and columns ['P', 'Q', ...exog_cols]
+        DataFrame with imputed values
+    """
+    df = df.copy()
+    
+    # 找到所有包含NaN的行
+    rows_with_nan = df[df.isna().any(axis=1)]
+    
+    if len(rows_with_nan) == 0:
+        print("✓ No missing values to impute")
+        return df
+    
+    # 找到完整数据中有功功率最接近target_p的行
+    df_complete = df.dropna()
+    
+    if len(df_complete) == 0:
+        print("⚠️  No complete rows available for imputation")
+        return df
+    
+    # 计算与目标值的距离
+    distances = np.abs(df_complete['P'] - target_p)
+    nearest_idx = distances.idxmin()
+    donor_row = df_complete.loc[nearest_idx]
+    
+    print(f"📌 Imputation donor row: P={donor_row['P']:.2f}, timestamp={nearest_idx}")
+    print(f"   Distance from target P={target_p}: {abs(donor_row['P'] - target_p):.2f}")
+    
+    # 对每个包含NaN的行进行填补
+    imputed_count = 0
+    for idx in rows_with_nan.index:
+        original_row = df.loc[idx].copy()
+        na_mask = original_row.isna()
+        
+        if na_mask.any():
+            # 用donor_row的值填补NaN
+            df.loc[idx, na_mask] = donor_row[na_mask]
+            imputed_count += 1
+    
+    print(f"✓ Imputed {imputed_count} rows with missing values")
+    
+    return df
+
+
+def load_data(
+    file_path: str,
+    time_col: str = None,
+    p_col: str = None,
+    q_col: str = None,
+    exog_cols: List[str] = None,
+    freq: str = 'h',
+    tz: str = None,
+    interp_limit: int = 3,
+    imputation_method: str = None,
+    target_p_value: float = 280.0
+) -> tuple:
+    """
+    Load and preprocess power data from CSV file
+    
+    Args:
+        file_path: Path to CSV file
+        time_col: Name of time column (None for auto-detect)
+        p_col: Name of active power column (None for auto-detect)
+        q_col: Name of reactive power column (None for auto-detect)
+        exog_cols: List of exogenous variable column names
+        freq: Frequency of time series ('h' for hourly)
+        tz: Timezone (None for naive datetime)
+        interp_limit: Maximum consecutive NaN values to interpolate
+        imputation_method: Method for imputing missing values ('nearest_p' or None)
+        target_p_value: Target P value for nearest_p imputation
+        
+    Returns:
+        Tuple of (processed_df, original_df_before_imputation)
     """
     path = Path(file_path)
     
@@ -157,83 +212,121 @@ def load_data(
     # Sort by time
     df.sort_index(inplace=True)
     
-    # Note: Data is already in hourly frequency, no resample needed
-    # Resampling would create NaN for missing timestamps
-    # Just keep the original data points
-    
     # Ensure numeric types
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     
     # Check for missing timestamps (gaps in time series)
+    original_points = len(df)
     if len(df) > 1:
         time_range = (df.index.max() - df.index.min())
         expected_points = int(time_range.total_seconds() / 3600) + 1  # Assuming hourly data
-        actual_points = len(df)
-        missing_timestamps = expected_points - actual_points
+        missing_timestamps = expected_points - original_points
         
         print(f"Loaded data shape: {df.shape}")
         print(f"Date range: {df.index.min()} to {df.index.max()}")
         if missing_timestamps > 0:
             print(f"⚠️  Time series has {missing_timestamps} missing timestamps (gaps in data)")
-            print(f"   Expected {expected_points} hourly points, found {actual_points}")
-        print(f"Missing values - P: {df['P'].isna().sum()}, Q: {df['Q'].isna().sum()}")
-    else:
-        print(f"Loaded data shape: {df.shape}")
-        print(f"Date range: {df.index.min()} to {df.index.max()}")
-        print(f"Missing values - P: {df['P'].isna().sum()}, Q: {df['Q'].isna().sum()}")
+            print(f"   Expected {expected_points} hourly points, found {original_points}")
+    
+    # Resample to complete hourly frequency (fills missing timestamps with NaN)
+    print(f"\n🔄 Resampling to complete hourly frequency...")
+    # Use lowercase 'h' to avoid deprecation warning
+    freq_str = freq.lower() if freq else 'h'
+    df = df.resample(freq_str).asfreq()  # Creates NaN for missing timestamps
+    
+    print(f"After resampling shape: {df.shape}")
+    print(f"Missing values - P: {df['P'].isna().sum()}, Q: {df['Q'].isna().sum()}")
     
     if exog_cols:
         for col in df.columns:
             if col not in ['P', 'Q']:
                 print(f"Missing values - {col}: {df[col].isna().sum()}")
     
-    return df
+    # Save copy before imputation for diagnostic plots (with NaN for missing timestamps)
+    df_before_imputation = df.copy()
+    
+    # Apply imputation if specified
+    if imputation_method == 'nearest_p':
+        print(f"\n🔧 Applying nearest_p imputation (target P={target_p_value})...")
+        df = impute_missing_by_nearest_p(df, target_p=target_p_value)
+        print(f"After imputation - P: {df['P'].isna().sum()}, Q: {df['Q'].isna().sum()}")
+    
+    return df, df_before_imputation
 
 
-def generate_diagnostic_plots(df: pd.DataFrame, output_dir: str = "outputs/figures"):
+def generate_diagnostic_plots(df: pd.DataFrame, df_before: pd.DataFrame = None, output_dir: str = "outputs/figures"):
     """
     Generate diagnostic plots for data quality inspection
     
     Args:
-        df: DataFrame with P and Q columns
+        df: DataFrame with P and Q columns (after processing)
+        df_before: DataFrame before imputation (optional, for comparison)
         output_dir: Directory to save plots
     """
     import matplotlib.pyplot as plt
-    import matplotlib
+    import matplotlib.font_manager as fm
     from pathlib import Path
     
-    # Configure Chinese font - comprehensive list for cross-platform support
-    matplotlib.rcParams['font.sans-serif'] = [
-        'SimHei',              # Windows
-        'Microsoft YaHei',     # Windows
-        'STHeiti',             # macOS
-        'PingFang SC',         # macOS
-        'Heiti SC',            # macOS
-        'WenQuanYi Micro Hei', # Linux
-        'Noto Sans CJK SC',    # Linux/Cross-platform
-        'DejaVu Sans',         # Fallback
-        'Arial Unicode MS'     # Fallback
-    ]
-    matplotlib.rcParams['axes.unicode_minus'] = False
+    # Configure matplotlib for Chinese display
+    # macOS default Chinese fonts: STHeiti, Heiti TC, PingFang SC, Arial Unicode MS
+    plt.rcParams['font.sans-serif'] = ['STHeiti', 'Heiti TC', 'PingFang SC', 'Arial Unicode MS', 'SimHei']
+    plt.rcParams['font.monospace'] = ['STHeiti', 'Courier New']  # 等宽字体也支持中文
+    plt.rcParams['axes.unicode_minus'] = False  # 正确显示负号
     
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     
-    # Overview plot
-    fig, axes = plt.subplots(2, 1, figsize=(12, 8))
-    
-    axes[0].plot(df.index, df['P'], linewidth=0.5, alpha=0.8, label='有功功率 P')
-    axes[0].set_ylabel('有功功率 P', fontsize=12)
-    axes[0].set_title('电力数据总览', fontsize=14, fontweight='bold')
-    axes[0].grid(True, alpha=0.3)
-    axes[0].legend(loc='best')
-    
-    axes[1].plot(df.index, df['Q'], linewidth=0.5, alpha=0.8, color='orange', label='无功功率 Q')
-    axes[1].set_ylabel('无功功率 Q', fontsize=12)
-    axes[1].set_xlabel('时间', fontsize=12)
-    axes[1].grid(True, alpha=0.3)
-    axes[1].legend(loc='best')
+    # Overview plot - show before and after imputation if both provided
+    if df_before is not None:
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        
+        # Before imputation - P
+        axes[0, 0].plot(df_before.index, df_before['P'], linewidth=0.5, alpha=0.8, label='有功功率 P')
+        axes[0, 0].set_ylabel('有功功率 P', fontsize=12)
+        axes[0, 0].set_title('处理前 - 有功功率', fontsize=13, fontweight='bold')
+        axes[0, 0].grid(True, alpha=0.3)
+        axes[0, 0].legend(loc='best')
+        
+        # Before imputation - Q  
+        axes[1, 0].plot(df_before.index, df_before['Q'], linewidth=0.5, alpha=0.8, color='orange', label='无功功率 Q')
+        axes[1, 0].set_ylabel('无功功率 Q', fontsize=12)
+        axes[1, 0].set_xlabel('时间', fontsize=12)
+        axes[1, 0].set_title('处理前 - 无功功率', fontsize=13, fontweight='bold')
+        axes[1, 0].grid(True, alpha=0.3)
+        axes[1, 0].legend(loc='best')
+        
+        # After imputation - P
+        axes[0, 1].plot(df.index, df['P'], linewidth=0.5, alpha=0.8, label='有功功率 P', color='green')
+        axes[0, 1].set_ylabel('有功功率 P', fontsize=12)
+        axes[0, 1].set_title('处理后 - 有功功率', fontsize=13, fontweight='bold')
+        axes[0, 1].grid(True, alpha=0.3)
+        axes[0, 1].legend(loc='best')
+        
+        # After imputation - Q
+        axes[1, 1].plot(df.index, df['Q'], linewidth=0.5, alpha=0.8, color='red', label='无功功率 Q')
+        axes[1, 1].set_ylabel('无功功率 Q', fontsize=12)
+        axes[1, 1].set_xlabel('时间', fontsize=12)
+        axes[1, 1].set_title('处理后 - 无功功率', fontsize=13, fontweight='bold')
+        axes[1, 1].grid(True, alpha=0.3)
+        axes[1, 1].legend(loc='best')
+        
+        fig.suptitle('电力数据总览 - 处理前后对比', fontsize=16, fontweight='bold', y=0.995)
+    else:
+        # Original single view
+        fig, axes = plt.subplots(2, 1, figsize=(12, 8))
+        
+        axes[0].plot(df.index, df['P'], linewidth=0.5, alpha=0.8, label='有功功率 P')
+        axes[0].set_ylabel('有功功率 P', fontsize=12)
+        axes[0].set_title('电力数据总览', fontsize=14, fontweight='bold')
+        axes[0].grid(True, alpha=0.3)
+        axes[0].legend(loc='best')
+        
+        axes[1].plot(df.index, df['Q'], linewidth=0.5, alpha=0.8, color='orange', label='无功功率 Q')
+        axes[1].set_ylabel('无功功率 Q', fontsize=12)
+        axes[1].set_xlabel('时间', fontsize=12)
+        axes[1].grid(True, alpha=0.3)
+        axes[1].legend(loc='best')
     
     plt.tight_layout()
     plt.savefig(output_path / 'data_overview.png', dpi=150, bbox_inches='tight')

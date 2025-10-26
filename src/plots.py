@@ -184,13 +184,15 @@ def plot_error_by_horizon(
     """
     configure_chinese_fonts()
     
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    # Check if only predicting P
+    targets = metrics_df['target'].unique()
     
-    targets = ['P', 'Q']
-    target_names = {'P': '有功功率', 'Q': '无功功率'}
-    
-    for idx, target in enumerate(targets):
-        ax = axes[idx]
+    if len(targets) == 1:
+        # Only one target (P), use single plot
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        target = targets[0]
+        target_name = '有功功率' if target == 'P' else '无功功率'
         
         # Filter data for this target
         target_data = metrics_df[metrics_df['target'] == target]
@@ -199,13 +201,36 @@ def plot_error_by_horizon(
         for model in target_data['model'].unique():
             model_data = target_data[target_data['model'] == model]
             grouped = model_data.groupby('horizon')[metric_name].mean()
-            ax.plot(grouped.index, grouped.values, marker='o', label=model, linewidth=2)
+            ax.plot(grouped.index, grouped.values, marker='o', label=model, linewidth=2, markersize=8)
         
-        ax.set_xlabel('预测步长')
-        ax.set_ylabel(metric_name)
-        ax.set_title(f'{target_names[target]} - {metric_name} vs 步长', fontsize=12, fontweight='bold')
-        ax.legend()
+        ax.set_xlabel('预测步长', fontsize=12)
+        ax.set_ylabel(metric_name, fontsize=12)
+        ax.set_title(f'{target_name} - {metric_name} vs 预测步长', fontsize=14, fontweight='bold')
+        ax.legend(fontsize=10)
         ax.grid(True, alpha=0.3)
+        
+    else:
+        # Two targets (P and Q), use two subplots
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        target_names = {'P': '有功功率', 'Q': '无功功率'}
+        
+        for idx, target in enumerate(targets):
+            ax = axes[idx]
+            
+            # Filter data for this target
+            target_data = metrics_df[metrics_df['target'] == target]
+            
+            # Group by model and horizon
+            for model in target_data['model'].unique():
+                model_data = target_data[target_data['model'] == model]
+                grouped = model_data.groupby('horizon')[metric_name].mean()
+                ax.plot(grouped.index, grouped.values, marker='o', label=model, linewidth=2)
+            
+            ax.set_xlabel('预测步长')
+            ax.set_ylabel(metric_name)
+            ax.set_title(f'{target_names[target]} - {metric_name} vs 步长', fontsize=12, fontweight='bold')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
     
@@ -214,6 +239,72 @@ def plot_error_by_horizon(
     plt.close()
     
     print(f"Error by horizon plot saved to {output_path}")
+
+
+def plot_all_metrics_by_horizon(
+    metrics_df: pd.DataFrame,
+    metrics: List[str] = None,
+    output_path: str = "outputs/figures/all_metrics_by_horizon.png",
+    dpi: int = 150
+):
+    """
+    Plot all metrics by forecast horizon for different models in subplots
+    
+    Args:
+        metrics_df: DataFrame with columns [model, horizon, target, RMSE, MAE, SMAPE, WAPE, ACC]
+        metrics: List of metric names to plot (default: ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC'])
+        output_path: Path to save figure
+        dpi: Resolution
+    """
+    configure_chinese_fonts()
+    
+    if metrics is None:
+        metrics = ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC']
+    
+    # Check which metrics are available
+    available_metrics = [m for m in metrics if m in metrics_df.columns]
+    n_metrics = len(available_metrics)
+    
+    # Check if only predicting P
+    targets = metrics_df['target'].unique()
+    target = targets[0]
+    target_name = '有功功率' if target == 'P' else '无功功率'
+    
+    # Filter data for the target
+    target_data = metrics_df[metrics_df['target'] == target]
+    
+    # Create subplots - 2 rows x 3 columns for 5 metrics
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    axes = axes.flatten()
+    
+    for idx, metric_name in enumerate(available_metrics):
+        ax = axes[idx]
+        
+        # Group by model and horizon
+        for model in sorted(target_data['model'].unique()):
+            model_data = target_data[target_data['model'] == model]
+            grouped = model_data.groupby('horizon')[metric_name].mean()
+            ax.plot(grouped.index, grouped.values, marker='o', label=model, 
+                   linewidth=2, markersize=6, alpha=0.8)
+        
+        ax.set_xlabel('预测步长', fontsize=11)
+        ax.set_ylabel(metric_name, fontsize=11)
+        ax.set_title(f'{metric_name} vs 预测步长', fontsize=12, fontweight='bold')
+        ax.legend(fontsize=9, loc='best')
+        ax.grid(True, alpha=0.3)
+    
+    # Hide extra subplots
+    for idx in range(n_metrics, len(axes)):
+        axes[idx].axis('off')
+    
+    plt.suptitle(f'{target_name} - 各模型评估指标对比', fontsize=16, fontweight='bold', y=0.995)
+    plt.tight_layout()
+    
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_path, dpi=dpi, bbox_inches='tight')
+    plt.close()
+    
+    print(f"All metrics by horizon plot saved to {output_path}")
 
 
 def plot_feature_importance(

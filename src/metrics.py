@@ -81,6 +81,35 @@ def wape(y_true: np.ndarray, y_pred: np.ndarray, eps: float = 1e-8) -> float:
     return 100.0 * numerator / denominator
 
 
+def acc(y_true: np.ndarray, y_pred: np.ndarray, threshold: float = 0.1) -> float:
+    """
+    近似准确率 (Approximate Accuracy)
+    
+    Definition: 100% * count(|y_true - y_pred| / |y_true| <= threshold) / len(y_true)
+    
+    计算预测值与真实值相对误差在阈值内的样本占比
+    默认阈值为10%，即预测误差在±10%以内视为准确
+    
+    Args:
+        y_true: True values
+        y_pred: Predicted values
+        threshold: Relative error threshold (default 0.1 for 10%)
+    
+    Returns:
+        ACC value as percentage (0-100)
+    """
+    # 避免除以零
+    mask = np.abs(y_true) > 1e-8
+    if not mask.any():
+        return 0.0
+    
+    relative_errors = np.abs(y_true[mask] - y_pred[mask]) / np.abs(y_true[mask])
+    accurate_count = np.sum(relative_errors <= threshold)
+    total_count = len(relative_errors)
+    
+    return 100.0 * accurate_count / total_count
+
+
 def eval_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,
@@ -93,19 +122,20 @@ def eval_metrics(
         y_true: True values
         y_pred: Predicted values
         metric_names: List of metric names to compute
-                      Default: ['RMSE', 'MAE', 'SMAPE', 'WAPE']
+                      Default: ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC']
     
     Returns:
         Dictionary mapping metric names to values
     """
     if metric_names is None:
-        metric_names = ['RMSE', 'MAE', 'SMAPE', 'WAPE']
+        metric_names = ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC']
     
     metric_funcs = {
         'RMSE': rmse,
         'MAE': mae,
         'SMAPE': smape,
-        'WAPE': wape
+        'WAPE': wape,
+        'ACC': acc
     }
     
     results = {}

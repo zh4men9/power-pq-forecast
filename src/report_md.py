@@ -309,16 +309,22 @@ def generate_markdown_report(
     # Find best model for each target
     for target in targets:
         target_data = agg_results[agg_results['target'] == target]
+        if target_data.empty:
+            continue
+            
         best_models = {}
         for metric in ['RMSE', 'MAE', 'SMAPE', 'WAPE']:
-            if metric in ['RMSE', 'MAE', 'SMAPE', 'WAPE']:
+            if metric in target_data.columns:
                 # Lower is better
-                best = target_data.groupby('model')[metric].mean().idxmin()
-                best_models[metric] = best
+                metric_means = target_data.groupby('model')[metric].mean()
+                if not metric_means.empty:
+                    best = metric_means.idxmin()
+                    best_models[metric] = best
         
-        report_lines.append(f"- **{target_names[target]}**: ")
-        for metric, best_model in best_models.items():
-            report_lines.append(f"  - {metric}最优模型: {best_model}")
+        if best_models:  # Only add section if we have best models
+            report_lines.append(f"- **{target_names[target]}**: ")
+            for metric, best_model in best_models.items():
+                report_lines.append(f"  - {metric}最优模型: {best_model}")
     
     report_lines.append("")
     report_lines.append("### 6.2 基线对比")

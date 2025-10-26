@@ -12,9 +12,10 @@ import logging
 from src.config import load_config
 from src.data_io import load_data, generate_diagnostic_plots
 from src.train_eval import run_evaluation
-from src.plots import plot_error_by_horizon, configure_chinese_fonts
+from src.plots import plot_error_by_horizon, plot_all_metrics_by_horizon, configure_chinese_fonts
 from src.report_md import generate_markdown_report
 from src.report_docx import generate_word_report
+from src.model_manager import save_model, get_best_model_info, make_future_forecast
 import pandas as pd
 
 
@@ -67,7 +68,7 @@ def main():
     """Main execution function"""
     # Parse arguments
     parser = argparse.ArgumentParser(description='电力质量预测项目 - 一键运行脚本')
-    parser.add_argument('--config', type=str, default='config_exog.yaml',
+    parser.add_argument('--config', type=str, default='config_p_only.yaml',
                        help='配置文件路径 (默认: config_exog.yaml)')
     args = parser.parse_args()
     
@@ -114,7 +115,8 @@ def main():
     logging.info(f"使用数据文件: {data_file}")
     
     # Load data with config parameters
-    df = load_data(
+    imputation_config = config.get('data', 'imputation', default={})
+    df, df_before = load_data(
         file_path=str(data_file),
         time_col=config.get('data', 'time_col'),
         p_col=config.get('data', 'p_col'),
@@ -122,64 +124,140 @@ def main():
         exog_cols=config.get('features', 'exog_cols', default=[]),
         freq=config.get('data', 'freq'),
         tz=config.get('data', 'tz'),
-        interp_limit=config.get('data', 'interp_limit', default=3)
+        interp_limit=config.get('data', 'interp_limit', default=3),
+        imputation_method=imputation_config.get('method'),
+        target_p_value=imputation_config.get('target_p_value', 280.0)
     )
     
-    # Generate diagnostic plots
+    # Generate diagnostic plots with before/after comparison
     figures_dir = output_dir / 'figures'
-    generate_diagnostic_plots(df, output_dir=str(figures_dir))
+    generate_diagnostic_plots(df, df_before=df_before, output_dir=str(figures_dir))
     print()
     
     # Run evaluation
     print("="*60)
-    print("步骤 3/6: 模型训练与评估")
+    print("步骤 3/7: 模型训练与评估")
     print("="*60)
     
     metrics_dir = output_dir / 'metrics'
-    results_df = run_evaluation(config, df, metrics_dir=str(metrics_dir))
+    results_df, trained_models = run_evaluation(config, df, metrics_dir=str(metrics_dir))
     logging.info("")
+    
+    # Save trained models
+    logging.info("="*60)
+    logging.info("步骤 4/7: 保存训练好的模型")
+    logging.info("="*60)
+    
+    models_dir = output_dir / 'models'
+    for model_name, model in trained_models.items():
+        # Get model performance from results
+        model_results = results_df[results_df['model'] == model_name]
+        if len(model_results) > 0:
+            metadata = {
+                'avg_rmse': model_results['RMSE'].mean(),
+                'avg_mae': model_results['MAE'].mean(),
+                'model_name': model_name
+            }
+        else:
+            metadata = {'model_name': model_name}
+        
+        save_model(model, model_name, str(models_dir), metadata=metadata)
+    
+    logging.info(f"✓ 所有模型已保存至: {models_dir}")
+    logging.info("")
+    
+    # Generate future forecast
+    forecast_df = None
+    forecast_config = config.get('forecast', default={})
+    if forecast_config.get('enabled', False):
+        logging.info("="*60)
+        logging.info("步骤 5/7: 生成未来预测")
+        logging.info("="*60)
+        
+        # Get best model
+        target_cols = []
+        if config.get('target', 'predict_p', default=True):
+            target_cols.append('P')
+        if config.get('target', 'predict_q', default=True):
+            target_cols.append('Q')
+        
+        target = target_cols[0]  # 使用第一个目标变量
+        best_model_info = get_best_model_info(results_df, target=target, metric='RMSE')
+        best_model_name = forecast_config.get('best_model', best_model_info['overall_best'])
+        
+        logging.info(f"最优模型（基于RMSE）: {best_model_info['overall_best']}")
+        logging.info(f"使用模型进行预测: {best_model_name}")
+        
+        if best_model_name in trained_models:
+            forecast_df = make_future_forecast(
+                df=df,
+                model=trained_models[best_model_name],
+                model_name=best_model_name,
+                start_date=forecast_config.get('start_date', '2025-10-20'),
+                end_date=forecast_config.get('end_date', '2025-10-22'),
+                config=config
+            )
+            
+            # Save forecast results
+            if forecast_df is not None and len(forecast_df) > 0:
+                forecast_path = output_dir / 'forecast_results.csv'
+                forecast_df.to_csv(forecast_path, index=False, encoding='utf-8-sig')
+                logging.info(f"✓ 预测结果已保存: {forecast_path}")
+        else:
+            logging.warning(f"⚠️  模型 {best_model_name} 不可用，跳过预测")
+        
+        logging.info("")
     
     # Generate plots
     logging.info("="*60)
-    logging.info("步骤 4/6: 生成图表")
+    logging.info("步骤 6/7: 生成图表")
     logging.info("="*60)
     
     configure_chinese_fonts(config.get('plotting', 'font_priority'))
     
-    # Plot error by horizon
+    # Plot error by horizon for RMSE
     plot_error_by_horizon(
         results_df,
         metric_name='RMSE',
-        output_path=str(figures_dir / 'error_by_horizon.png'),
+        output_path=str(figures_dir / 'error_by_horizon_rmse.png'),
         dpi=config.get('plotting', 'fig_dpi', default=150)
     )
+    
+    # Plot all metrics by horizon
+    available_metrics = [m for m in config.get('evaluation', 'metrics', default=[]) 
+                        if m in results_df.columns]
+    if available_metrics:
+        plot_all_metrics_by_horizon(
+            results_df,
+            metrics=available_metrics,
+            output_path=str(figures_dir / 'all_metrics_by_horizon.png'),
+            dpi=config.get('plotting', 'fig_dpi', default=150)
+        )
     
     logging.info("")
     
     # Generate Markdown report
     logging.info("="*60)
-    logging.info("步骤 5/6: 生成Markdown报告")
+    logging.info("步骤 7/7: 生成报告")
     logging.info("="*60)
     
     report_dir = output_dir / 'report'
+    
+    # Markdown report
     md_report_path = generate_markdown_report(
         results_df,
         config_path=args.config,
         figures_dir=str(figures_dir),
         output_path=str(report_dir / '项目评估报告.md')
     )
-    logging.info("")
     
-    # Generate Word report
-    logging.info("="*60)
-    logging.info("步骤 6/6: 生成Word报告")
-    logging.info("="*60)
-    
+    # Word report (with forecast results)
     word_report_path = generate_word_report(
         results_df,
         config_path=args.config,
         figures_dir=str(figures_dir),
-        output_path=str(report_dir / '项目评估报告.docx')
+        output_path=str(report_dir / '项目评估报告.docx'),
+        forecast_df=forecast_df
     )
     logging.info("")
     
@@ -197,7 +275,10 @@ def main():
     logging.info(f"最新结果链接: {latest_dir}")
     logging.info(f"  - 日志文件: {log_file}")
     logging.info(f"  - 指标表: {metrics_dir / 'cv_metrics.csv'}")
+    logging.info(f"  - 模型目录: {models_dir}")
     logging.info(f"  - 图表目录: {figures_dir}")
+    if forecast_df is not None and len(forecast_df) > 0:
+        logging.info(f"  - 预测结果: {output_dir / 'forecast_results.csv'} ({len(forecast_df)} 个时间点)")
     logging.info(f"  - Markdown报告: {md_report_path}")
     logging.info(f"  - Word报告: {word_report_path}")
     logging.info("="*60)

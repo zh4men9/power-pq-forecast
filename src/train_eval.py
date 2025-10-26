@@ -22,6 +22,28 @@ from src.models.transformer import TransformerForecaster
 warnings.filterwarnings('ignore')
 
 
+def get_target_columns(config: Config) -> List[str]:
+    """
+    获取要预测的目标列列表
+    
+    Args:
+        config: 配置对象
+    
+    Returns:
+        目标列名称列表
+    """
+    targets = []
+    if config.get('target', 'predict_p', default=True):
+        targets.append('P')
+    if config.get('target', 'predict_q', default=True):
+        targets.append('Q')
+    
+    if not targets:
+        raise ValueError("至少需要预测P或Q中的一个目标")
+    
+    return targets
+
+
 def train_evaluate_tree_models(
     X: pd.DataFrame,
     Y: pd.DataFrame,
@@ -44,8 +66,11 @@ def train_evaluate_tree_models(
     """
     results = []
     
-    # Create target shifted by horizon
-    Y_h = Y.shift(-horizon).dropna()
+    # Get target columns to predict
+    target_cols = get_target_columns(config)
+    
+    # Create target shifted by horizon (only keep columns to predict)
+    Y_h = Y[target_cols].shift(-horizon).dropna()
     X_h = X.loc[Y_h.index]
     
     # Initialize models
@@ -93,11 +118,12 @@ def train_evaluate_tree_models(
             Y_pred = model.predict(X_test)
             
             # Evaluate for each target
-            for target_idx, target in enumerate(['P', 'Q']):
+            for target_idx, target in enumerate(target_cols):
                 y_true = Y_test[target].values
                 y_pred = Y_pred[:, target_idx] if len(Y_pred.shape) > 1 else Y_pred
                 
-                metrics = eval_metrics(y_true, y_pred)
+                metrics = eval_metrics(y_true, y_pred, 
+                                      metric_names=config.get('evaluation', 'metrics'))
                 
                 logging.info(f"      {model_name} ({target}): RMSE={metrics['RMSE']:.4f}, MAE={metrics['MAE']:.4f}")
                 
@@ -132,9 +158,12 @@ def train_evaluate_baseline_models(
     """
     results = []
     
-    # Create target shifted by horizon
-    Y_h = Y.shift(-horizon).dropna()
-    Y_orig = Y.loc[Y_h.index]
+    # Get target columns to predict
+    target_cols = get_target_columns(config)
+    
+    # Create target shifted by horizon (only keep columns to predict)
+    Y_h = Y[target_cols].shift(-horizon).dropna()
+    Y_orig = Y[target_cols].loc[Y_h.index]
     
     # Determine season length from config
     season_length = config.get('features', 'season_length', default=24)
@@ -154,11 +183,12 @@ def train_evaluate_baseline_models(
             naive_model.fit(None, Y_train)
             Y_pred_naive = naive_model.predict(range(len(test_idx)))
             
-            for target_idx, target in enumerate(['P', 'Q']):
+            for target_idx, target in enumerate(target_cols):
                 y_true = Y_test[target].values
-                y_pred = Y_pred_naive[:, target_idx]
+                y_pred = Y_pred_naive[:, target_idx] if len(target_cols) > 1 else Y_pred_naive
                 
-                metrics = eval_metrics(y_true, y_pred)
+                metrics = eval_metrics(y_true, y_pred,
+                                      metric_names=config.get('evaluation', 'metrics'))
                 
                 logging.info(f"      Naive ({target}): RMSE={metrics['RMSE']:.4f}, MAE={metrics['MAE']:.4f}")
                 
@@ -177,11 +207,12 @@ def train_evaluate_baseline_models(
             seasonal_model.fit(None, Y_train)
             Y_pred_seasonal = seasonal_model.predict(range(len(test_idx)))
             
-            for target_idx, target in enumerate(['P', 'Q']):
+            for target_idx, target in enumerate(target_cols):
                 y_true = Y_test[target].values
-                y_pred = Y_pred_seasonal[:, target_idx]
+                y_pred = Y_pred_seasonal[:, target_idx] if len(target_cols) > 1 else Y_pred_seasonal
                 
-                metrics = eval_metrics(y_true, y_pred)
+                metrics = eval_metrics(y_true, y_pred,
+                                      metric_names=config.get('evaluation', 'metrics'))
                 
                 logging.info(f"      SeasonalNaive ({target}): RMSE={metrics['RMSE']:.4f}, MAE={metrics['MAE']:.4f}")
                 
@@ -216,6 +247,9 @@ def train_evaluate_deep_models(
     """
     results = []
     
+    # Get target columns to predict
+    target_cols = get_target_columns(config)
+    
     # Prepare sequences
     sequence_length = config.get('features', 'sequence_length', default=24)
     exog_cols = config.get('features', 'exog_cols', default=[])
@@ -223,11 +257,13 @@ def train_evaluate_deep_models(
     logging.info(f"准备深度学习序列数据...")
     logging.info(f"  序列长度: {sequence_length}")
     logging.info(f"  预测步长: {horizon}")
+    logging.info(f"  预测目标: {target_cols}")
     if exog_cols:
         logging.info(f"  外生变量: {exog_cols}")
     
     X_seq, Y_seq = prepare_sequences(df, sequence_length=sequence_length, 
-                                     horizon=horizon, exog_cols=exog_cols)
+                                     horizon=horizon, exog_cols=exog_cols,
+                                     target_cols=target_cols)
     
     # Initialize models
     models = {}
@@ -305,11 +341,12 @@ def train_evaluate_deep_models(
             Y_pred = model.predict(X_test)
             
             # Evaluate for each target
-            for target_idx, target in enumerate(['P', 'Q']):
-                y_true = Y_test[:, target_idx]
-                y_pred = Y_pred[:, target_idx]
+            for target_idx, target in enumerate(target_cols):
+                y_true = Y_test[:, target_idx] if len(target_cols) > 1 else Y_test
+                y_pred = Y_pred[:, target_idx] if len(target_cols) > 1 else Y_pred
                 
-                metrics = eval_metrics(y_true, y_pred)
+                metrics = eval_metrics(y_true, y_pred,
+                                      metric_names=config.get('evaluation', 'metrics'))
                 
                 logging.info(f"      {model_name} ({target}): RMSE={metrics['RMSE']:.4f}, MAE={metrics['MAE']:.4f}")
                 
@@ -324,7 +361,7 @@ def train_evaluate_deep_models(
     return results
 
 
-def run_evaluation(config: Config, df: pd.DataFrame, metrics_dir: str = "outputs/metrics") -> pd.DataFrame:
+def run_evaluation(config: Config, df: pd.DataFrame, metrics_dir: str = "outputs/metrics") -> tuple:
     """
     Run full evaluation pipeline
     
@@ -334,13 +371,16 @@ def run_evaluation(config: Config, df: pd.DataFrame, metrics_dir: str = "outputs
         metrics_dir: Directory to save metrics
     
     Returns:
-        DataFrame with all evaluation results
+        Tuple of (results_df, trained_models_dict)
+        - results_df: DataFrame with all evaluation results
+        - trained_models_dict: Dictionary of trained models {model_name: model_object}
     """
     horizons = config.get('evaluation', 'horizons', default=[1, 12, 24])
     test_window = config.get('evaluation', 'test_window', default=100)
     n_splits = config.get('evaluation', 'n_splits', default=3)
     
     all_results = []
+    trained_models = {}  # 保存训练好的模型
     
     # Create features for tree models
     max_lag = config.get('features', 'max_lag', default=24)
@@ -391,7 +431,102 @@ def run_evaluation(config: Config, df: pd.DataFrame, metrics_dir: str = "outputs
     logging.info(f"所有评估完成！共 {len(all_results)} 个评估结果")
     logging.info(f"结果已保存至: {output_dir / 'cv_metrics.csv'}")
     logging.info(f"{'='*60}")
-    logging.info(f"Evaluation complete. Results saved to {output_dir / 'cv_metrics.csv'}")
+    
+    # Train final models on full data for prediction
+    logging.info(f"\n{'='*60}")
+    logging.info("训练最终模型（使用全部数据）用于预测...")
     logging.info(f"{'='*60}")
     
-    return results_df
+    target_cols = get_target_columns(config)
+    Y_full = df[target_cols]
+    
+    # Train baseline models
+    if config.get('models', 'naive', 'enabled', default=True):
+        model = NaiveForecaster()
+        model.fit(None, Y_full)
+        trained_models['Naive'] = model
+        logging.info("✓ Naive 模型训练完成")
+    
+    if config.get('models', 'seasonal_naive', 'enabled', default=True):
+        season_length = config.get('features', 'season_length', default=24)
+        model = SeasonalNaiveForecaster(season_length=season_length)
+        model.fit(None, Y_full)
+        trained_models['SeasonalNaive'] = model
+        logging.info("✓ SeasonalNaive 模型训练完成")
+    
+    # Prepare features for tree models (use horizon=1 for final model)
+    # X and Y already have aligned indices after create_features
+    # Y has only the rows that have sufficient history for lag features
+    Y_h = Y[target_cols].shift(-1).dropna()
+    X_h = X.loc[Y_h.index]
+    
+    # Train tree models
+    if config.get('models', 'rf', 'enabled', default=False):
+        rf_params = config.get('models', 'rf', default={})
+        model = RandomForestForecaster(
+            n_estimators=rf_params.get('n_estimators', 100),
+            max_depth=rf_params.get('max_depth'),
+            n_jobs=rf_params.get('n_jobs', -1),
+            random_state=42
+        )
+        model.fit(X_h, Y_h)
+        trained_models['RandomForest'] = model
+        logging.info("✓ RandomForest 模型训练完成")
+    
+    if config.get('models', 'xgb', 'enabled', default=False):
+        xgb_params = config.get('models', 'xgb', default={})
+        model = XGBoostForecaster(
+            n_estimators=xgb_params.get('n_estimators', 100),
+            max_depth=xgb_params.get('max_depth', 6),
+            learning_rate=xgb_params.get('learning_rate', 0.1),
+            n_jobs=xgb_params.get('n_jobs', -1),
+            random_state=42
+        )
+        model.fit(X_h, Y_h)
+        trained_models['XGBoost'] = model
+        logging.info("✓ XGBoost 模型训练完成")
+    
+    # Train deep learning models
+    sequence_length = config.get('features', 'sequence_length', default=24)
+    
+    if config.get('models', 'lstm', 'enabled', default=False):
+        lstm_params = config.get('models', 'lstm', default={})
+        model = LSTMForecaster(
+            hidden_size=lstm_params.get('hidden_size', 64),
+            num_layers=lstm_params.get('num_layers', 2),
+            dropout=lstm_params.get('dropout', 0.2),
+            epochs=lstm_params.get('epochs', 50),
+            batch_size=lstm_params.get('batch_size', 32),
+            learning_rate=lstm_params.get('learning_rate', 0.001)
+        )
+        X_seq, Y_seq = prepare_sequences(df, sequence_length=sequence_length, 
+                                         horizon=1, exog_cols=exog_cols,
+                                         target_cols=target_cols)
+        model.fit(X_seq, Y_seq)
+        trained_models['LSTM'] = model
+        logging.info("✓ LSTM 模型训练完成")
+    
+    if config.get('models', 'transformer', 'enabled', default=False):
+        trans_params = config.get('models', 'transformer', default={})
+        model = TransformerForecaster(
+            d_model=trans_params.get('d_model', 64),
+            nhead=trans_params.get('nhead', 4),
+            num_encoder_layers=trans_params.get('num_encoder_layers', 2),
+            num_decoder_layers=trans_params.get('num_decoder_layers', 2),
+            dim_feedforward=trans_params.get('dim_feedforward', 256),
+            dropout=trans_params.get('dropout', 0.1),
+            epochs=trans_params.get('epochs', 50),
+            batch_size=trans_params.get('batch_size', 32),
+            learning_rate=trans_params.get('learning_rate', 0.001)
+        )
+        X_seq, Y_seq = prepare_sequences(df, sequence_length=sequence_length, 
+                                         horizon=1, exog_cols=exog_cols,
+                                         target_cols=target_cols)
+        model.fit(X_seq, Y_seq)
+        trained_models['Transformer'] = model
+        logging.info("✓ Transformer 模型训练完成")
+    
+    logging.info(f"✓ 共训练 {len(trained_models)} 个最终模型")
+    logging.info(f"{'='*60}")
+    
+    return results_df, trained_models

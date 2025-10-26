@@ -57,7 +57,8 @@ def generate_word_report(
     metrics_df: pd.DataFrame,
     config_path: str = "config.yaml",
     figures_dir: str = "outputs/figures",
-    output_path: str = "outputs/report/项目评估报告.docx"
+    output_path: str = "outputs/report/项目评估报告.docx",
+    forecast_df: pd.DataFrame = None
 ) -> str:
     """
     Generate Word (DOCX) report from evaluation results
@@ -72,6 +73,7 @@ def generate_word_report(
         config_path: Path to configuration file
         figures_dir: Directory containing figures
         output_path: Path to save report
+        forecast_df: Optional DataFrame with forecast results
     
     Returns:
         Path to generated report
@@ -91,13 +93,11 @@ def generate_word_report(
     
     doc.add_page_break()
     
-    # Aggregate results
-    agg_results = metrics_df.groupby(['model', 'horizon', 'target']).agg({
-        'RMSE': 'mean',
-        'MAE': 'mean',
-        'SMAPE': 'mean',
-        'WAPE': 'mean'
-    }).reset_index()
+    # Aggregate results - get all available metrics
+    metric_cols = [col for col in ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC'] 
+                   if col in metrics_df.columns]
+    agg_dict = {col: 'mean' for col in metric_cols}
+    agg_results = metrics_df.groupby(['model', 'horizon', 'target']).agg(agg_dict).reset_index()
     
     # Section 1: Overview
     add_heading_with_style(doc, '一、项目概况', level=1)
@@ -346,16 +346,22 @@ def generate_word_report(
     
     # Find best models
     for target in targets:
-        doc.add_paragraph(f'{target_names[target]}预测:', style='List Bullet')
         target_data = agg_results[agg_results['target'] == target]
+        if target_data.empty:
+            continue
+            
+        doc.add_paragraph(f'{target_names[target]}预测:', style='List Bullet')
         
         for metric in ['RMSE', 'MAE', 'SMAPE', 'WAPE']:
-            best_model = target_data.groupby('model')[metric].mean().idxmin()
-            best_value = target_data.groupby('model')[metric].mean().min()
-            doc.add_paragraph(
-                f'{metric}最优模型: {best_model} (平均值: {best_value:.4f})',
-                style='List Number'
-            )
+            if metric in target_data.columns:
+                metric_means = target_data.groupby('model')[metric].mean()
+                if not metric_means.empty:
+                    best_model = metric_means.idxmin()
+                    best_value = metric_means.min()
+                    doc.add_paragraph(
+                        f'{metric}最优模型: {best_model} (平均值: {best_value:.4f})',
+                        style='List Number'
+                    )
     
     add_heading_with_style(doc, '5.2 基线对比', level=2)
     doc.add_paragraph(
@@ -388,6 +394,45 @@ def generate_word_report(
     doc.add_paragraph('详细指标: 见 cv_metrics.csv', style='List Bullet')
     doc.add_paragraph('图表目录: 见 figures/ 目录', style='List Bullet')
     doc.add_paragraph('执行命令: python run_all.py --config config.yaml', style='List Bullet')
+    
+    # Section 7: Forecast Results (if available)
+    if forecast_df is not None and len(forecast_df) > 0:
+        add_heading_with_style(doc, '七、未来预测结果', level=1)
+        
+        doc.add_paragraph(
+            f'本节展示使用最优模型对未来时间段的预测结果。'
+            f'预测时间范围：{forecast_df["时间"].min()} 至 {forecast_df["时间"].max()}，'
+            f'共{len(forecast_df)}个时间点。'
+        )
+        doc.add_paragraph()
+        
+        add_heading_with_style(doc, '7.1 预测结果表格', level=2)
+        
+        # Add forecast table (show all rows if reasonable, otherwise sample)
+        if len(forecast_df) <= 100:
+            display_df = forecast_df.copy()
+        else:
+            # Show first 50 and last 50
+            display_df = pd.concat([forecast_df.head(50), forecast_df.tail(50)])
+            doc.add_paragraph(f'注：完整预测结果共{len(forecast_df)}行，此处展示前50行和后50行')
+            doc.add_paragraph()
+        
+        # Format time column
+        display_df = display_df.copy()
+        display_df['时间'] = display_df['时间'].dt.strftime('%Y-%m-%d %H:%M')
+        display_df['预测值'] = display_df['预测值'].round(2)
+        
+        add_table_from_dataframe(doc, display_df, title='有功功率预测结果')
+        doc.add_paragraph()
+        
+        # Add statistics
+        add_heading_with_style(doc, '7.2 预测统计信息', level=2)
+        doc.add_paragraph(f'预测均值: {forecast_df["预测值"].mean():.2f}', style='List Bullet')
+        doc.add_paragraph(f'预测中位数: {forecast_df["预测值"].median():.2f}', style='List Bullet')
+        doc.add_paragraph(f'预测标准差: {forecast_df["预测值"].std():.2f}', style='List Bullet')
+        doc.add_paragraph(f'预测最小值: {forecast_df["预测值"].min():.2f}', style='List Bullet')
+        doc.add_paragraph(f'预测最大值: {forecast_df["预测值"].max():.2f}', style='List Bullet')
+        doc.add_paragraph()
     
     # Footer
     doc.add_page_break()
