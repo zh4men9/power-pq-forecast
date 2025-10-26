@@ -27,20 +27,53 @@ from tqdm import tqdm
 import sys
 
 
-def get_optimal_device():
+def get_optimal_device(config_device: str = 'auto'):
     """
-    自动检测并返回最优计算设备
+    根据配置返回计算设备
     
-    优先级:
+    Args:
+        config_device: 设备配置 ('auto', 'cpu', 'mps', 'cuda')
+    
+    优先级 (当 config_device='auto'):
     1. CUDA GPU (NVIDIA)
-    2. MPS (Apple Silicon Mac) - 如果未禁用
+    2. MPS (Apple Silicon Mac)
     3. CPU
     
     Returns:
-        torch.device: 最优设备
+        torch.device: 计算设备
     """
     import os
     
+    # 如果指定了具体设备，直接使用
+    if config_device == 'cpu':
+        device = torch.device('cpu')
+        logging.info(f"✓ 使用 CPU (配置指定)")
+        return device
+    
+    if config_device == 'mps':
+        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            device = torch.device('mps')
+            logging.info(f"✓ 使用 Apple Metal (MPS) 加速 (配置指定)")
+            return device
+        else:
+            logging.warning(f"⚠️  MPS不可用，回退到CPU")
+            device = torch.device('cpu')
+            logging.info(f"✓ 使用 CPU")
+            return device
+    
+    if config_device == 'cuda':
+        if torch.cuda.is_available():
+            device = torch.device('cuda')
+            logging.info(f"✓ 使用 CUDA GPU: {torch.cuda.get_device_name(0)} (配置指定)")
+            logging.info(f"  显存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+            return device
+        else:
+            logging.warning(f"⚠️  CUDA不可用，回退到CPU")
+            device = torch.device('cpu')
+            logging.info(f"✓ 使用 CPU")
+            return device
+    
+    # 自动检测 (config_device='auto' 或其他)
     # 检查是否通过环境变量禁用 MPS
     disable_mps = os.environ.get('DISABLE_MPS', '0') == '1'
     
@@ -59,7 +92,7 @@ def get_optimal_device():
         if disable_mps:
             logging.info(f"ℹ 使用 CPU (MPS已被禁用)")
         else:
-            logging.info(f"⚠ 使用 CPU (建议使用GPU以加快训练)")
+            logging.info(f"✓ 使用 CPU")
     
     return device
 
@@ -224,14 +257,11 @@ class TransformerForecaster:
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         
-        # Set device with auto-detection
-        # TEMPORARY: Force CPU to test if MPS is causing NaN issues
-        # logging.info("🔧 临时强制使用 CPU 设备进行训练 (测试 MPS NaN 问题)")
-        # self.device = torch.device('cpu')
+        # Set device from config or auto-detection
         if device is None:
-            self.device = get_optimal_device()
+            self.device = get_optimal_device('auto')
         else:
-            self.device = torch.device(device)
+            self.device = get_optimal_device(device)
         
         self.model = None
         self.scaler_mean_ = None

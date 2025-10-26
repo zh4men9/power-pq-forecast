@@ -289,13 +289,17 @@ def train_evaluate_deep_models(
         logging.info(f"  batch_size={lstm_params.get('batch_size', 32)}")
         logging.info(f"  learning_rate={lstm_params.get('learning_rate', 0.001)}")
         
+        # Get device config
+        device_type = config.get('device', 'type', default='cpu')
+        
         models['LSTM'] = LSTMForecaster(
             hidden_size=lstm_params.get('hidden_size', 64),
             num_layers=lstm_params.get('num_layers', 2),
             dropout=lstm_params.get('dropout', 0.2),
             epochs=lstm_params.get('epochs', 50),
             batch_size=lstm_params.get('batch_size', 32),
-            learning_rate=lstm_params.get('learning_rate', 0.001)
+            learning_rate=lstm_params.get('learning_rate', 0.001),
+            device=device_type
         )
     
     if config.get('models', 'transformer', 'enabled', default=False):
@@ -311,6 +315,9 @@ def train_evaluate_deep_models(
         logging.info(f"  batch_size={trans_params.get('batch_size', 32)}")
         logging.info(f"  learning_rate={trans_params.get('learning_rate', 0.001)}")
         
+        # Get device config
+        device_type = config.get('device', 'type', default='cpu')
+        
         models['Transformer'] = TransformerForecaster(
             d_model=trans_params.get('d_model', 64),
             nhead=trans_params.get('nhead', 4),
@@ -320,7 +327,8 @@ def train_evaluate_deep_models(
             dropout=trans_params.get('dropout', 0.1),
             epochs=trans_params.get('epochs', 50),
             batch_size=trans_params.get('batch_size', 32),
-            learning_rate=trans_params.get('learning_rate', 0.001)
+            learning_rate=trans_params.get('learning_rate', 0.001),
+            device=device_type
         )
     
     if not models:
@@ -502,13 +510,15 @@ def run_evaluation(config: Config, df: pd.DataFrame, metrics_dir: str = "outputs
     
     if config.get('models', 'lstm', 'enabled', default=False):
         lstm_params = config.get('models', 'lstm', default={})
+        device_type = config.get('device', 'type', default='cpu')
         model = LSTMForecaster(
             hidden_size=lstm_params.get('hidden_size', 64),
             num_layers=lstm_params.get('num_layers', 2),
             dropout=lstm_params.get('dropout', 0.2),
             epochs=lstm_params.get('epochs', 50),
             batch_size=lstm_params.get('batch_size', 32),
-            learning_rate=lstm_params.get('learning_rate', 0.001)
+            learning_rate=lstm_params.get('learning_rate', 0.001),
+            device=device_type
         )
         X_seq, Y_seq = prepare_sequences(df, sequence_length=sequence_length, 
                                          horizon=1, exog_cols=exog_cols,
@@ -519,6 +529,7 @@ def run_evaluation(config: Config, df: pd.DataFrame, metrics_dir: str = "outputs
     
     if config.get('models', 'transformer', 'enabled', default=False):
         trans_params = config.get('models', 'transformer', default={})
+        device_type = config.get('device', 'type', default='cpu')
         model = TransformerForecaster(
             d_model=trans_params.get('d_model', 64),
             nhead=trans_params.get('nhead', 4),
@@ -528,7 +539,8 @@ def run_evaluation(config: Config, df: pd.DataFrame, metrics_dir: str = "outputs
             dropout=trans_params.get('dropout', 0.1),
             epochs=trans_params.get('epochs', 50),
             batch_size=trans_params.get('batch_size', 32),
-            learning_rate=trans_params.get('learning_rate', 0.001)
+            learning_rate=trans_params.get('learning_rate', 0.001),
+            device=device_type
         )
         X_seq, Y_seq = prepare_sequences(df, sequence_length=sequence_length, 
                                          horizon=1, exog_cols=exog_cols,

@@ -1,6 +1,14 @@
 # 电力有功预测项目配置文件 - 仅预测有功功率
 # Power Forecasting Configuration - Active Power Only
 
+# 设备配置
+device:
+  type: "cpu"  # 可选: "auto", "cpu", "mps", "cuda"
+  # auto: 自动检测 (优先级: cuda > mps > cpu)
+  # cpu: 强制使用CPU (小模型推荐，稳定快速)
+  # mps: 强制使用Apple Metal (需要大batch size才有优势)
+  # cuda: 强制使用NVIDIA GPU
+
 # 数据配置
 data:
   data_path: "data/raw"
@@ -83,9 +91,9 @@ models:
     enabled: true
     hidden_size: 64
     num_layers: 2
-    dropout: 0.2
+    dropout: 0.3
     epochs: 100
-    batch_size: 1024
+    batch_size: 64
     learning_rate: 0.001
   
   # Transformer
@@ -96,10 +104,10 @@ models:
     num_encoder_layers: 2
     num_decoder_layers: 2
     dim_feedforward: 256
-    dropout: 0.1
-    epochs: 100
-    batch_size: 1024
-    learning_rate: 0.001
+    dropout: 0.2
+    epochs: 200
+    batch_size: 32
+    learning_rate: 0.0005
 
 # 预测配置
 forecast:
