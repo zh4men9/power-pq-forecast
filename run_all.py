@@ -163,10 +163,18 @@ def run_single_strategy(config, data_file, output_dir, config_backup_path, imput
         logging.info(f"最优模型（基于RMSE）: {best_model_info['overall_best']}")
         logging.info(f"使用模型进行预测: {best_model_name}")
         
+        # 智能查找模型（兼容多种键名）
+        model_key = None
         if best_model_name in trained_models:
+            model_key = best_model_name
+        elif f"{best_model_name}_all_horizons" in trained_models:
+            model_key = f"{best_model_name}_all_horizons"
+            logging.info(f"  找到模型: {model_key}")
+        
+        if model_key:
             forecast_df = make_future_forecast(
                 df=df,
-                model=trained_models[best_model_name],
+                model=trained_models[model_key],
                 model_name=best_model_name,
                 start_date=forecast_config.get('start_date', '2025-10-20'),
                 end_date=forecast_config.get('end_date', '2025-10-22'),
@@ -180,6 +188,7 @@ def run_single_strategy(config, data_file, output_dir, config_backup_path, imput
                 logging.info(f"✓ 预测结果已保存: {forecast_path}")
         else:
             logging.warning(f"⚠️  模型 {best_model_name} 不可用，跳过预测")
+            logging.info(f"   可用的模型键: {list(trained_models.keys())}")
         
         logging.info("")
     

@@ -65,7 +65,7 @@ features:
 
 # 评估配置
 evaluation:
-  horizons: "1,2,3"  # 预测步长 (支持逗号分隔字符串或列表)
+  horizons: "1,6"  # 预测步长 (支持逗号分隔字符串或列表)
   test_window: 100
   n_splits: 1  # 交叉验证折数 (1=单次划分, 3=3折交叉验证)
   metrics:

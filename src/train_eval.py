@@ -301,27 +301,69 @@ def _train_evaluate_multiple_output(
     logging.info(f"{'='*60}\n")
     
     # Prepare data for ALL horizons at once
-    # X will be the same, but Y will be stacked [Y_h1, Y_h2, ..., Y_hn]
+    # Important: Use max horizon to prepare X, then prepare Y for all horizons
+    # This ensures all horizons have the same number of samples
     logging.info(f"准备多输出数据...")
     
-    # Get X from first horizon (same for all)
+    max_horizon = max(horizons)
+    logging.info(f"  使用 max_horizon={max_horizon} 来准备数据（确保样本数一致）")
+    
+    # Prepare sequences using max horizon to get consistent sample count
+    # For multiple output, we'll generate separate Y for each horizon
+    # but based on the same X (from max_horizon)
+    
+    # First, prepare data for max horizon to get X
     X_seq, _ = prepare_sequences(df, sequence_length=sequence_length, 
-                                 horizon=horizons[0], exog_cols=exog_cols,
+                                 horizon=max_horizon, exog_cols=exog_cols,
                                  target_cols=target_cols)
     
-    # Stack Y for all horizons
+    n_samples = len(X_seq)
+    logging.info(f"  样本数: {n_samples}")
+    
+    # Now prepare Y for each horizon, ensuring same sample count
+    # We need to manually align the data
     Y_all_horizons = []
     for horizon in horizons:
-        _, Y_h = prepare_sequences(df, sequence_length=sequence_length, 
-                                   horizon=horizon, exog_cols=exog_cols,
-                                   target_cols=target_cols)
+        # Prepare Y for this horizon
+        # Use the same data range as X_seq
+        _, Y_h_full = prepare_sequences(df, sequence_length=sequence_length, 
+                                       horizon=horizon, exog_cols=exog_cols,
+                                       target_cols=target_cols)
+        
+        # Truncate or pad to match n_samples
+        if len(Y_h_full) > n_samples:
+            # Take the last n_samples (most recent data)
+            Y_h = Y_h_full[-n_samples:]
+        elif len(Y_h_full) < n_samples:
+            # This shouldn't happen if we use max_horizon correctly
+            # But just in case, truncate X_seq
+            logging.warning(f"  ⚠️  horizon={horizon} 生成的样本数({len(Y_h_full)}) < max_horizon样本数({n_samples})")
+            # Re-adjust X_seq and n_samples
+            if len(Y_all_horizons) == 0:  # First horizon
+                X_seq = X_seq[:len(Y_h_full)]
+                n_samples = len(Y_h_full)
+            Y_h = Y_h_full
+        else:
+            Y_h = Y_h_full
+        
         Y_all_horizons.append(Y_h)
+        logging.info(f"  horizon={horizon}: Y shape={Y_h.shape}")
+    
+    # Final verification: all Y should have same length
+    y_lengths = [len(y) for y in Y_all_horizons]
+    if len(set(y_lengths)) > 1:
+        # Truncate all to min length
+        min_len = min(y_lengths)
+        logging.warning(f"  ⚠️  不同horizon的样本数不一致: {y_lengths}, 截断到 {min_len}")
+        Y_all_horizons = [y[:min_len] for y in Y_all_horizons]
+        X_seq = X_seq[:min_len]
+        n_samples = min_len
     
     # Y shape: (n_samples, n_targets * n_horizons)
     Y_seq = np.hstack(Y_all_horizons)
     
-    logging.info(f"  X shape: {X_seq.shape}")
-    logging.info(f"  Y shape: {Y_seq.shape} ({n_targets} targets × {n_horizons} horizons)")
+    logging.info(f"  ✓ X shape: {X_seq.shape}")
+    logging.info(f"  ✓ Y shape: {Y_seq.shape} ({n_targets} targets × {n_horizons} horizons)")
     
     # Initialize models with n_horizons parameter
     models = {}
@@ -436,7 +478,9 @@ def _train_evaluate_multiple_output(
         # Save trained models (last fold)
         if fold_idx == cv_splitter.n_splits - 1:
             for model_name, model in models.items():
+                # 保存两个键以确保兼容性
                 trained_models[f"{model_name}_all_horizons"] = model
+                trained_models[model_name] = model  # 方便直接使用模型名访问
     
     return results, trained_models
 

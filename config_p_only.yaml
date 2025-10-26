@@ -3,7 +3,7 @@
 
 # 设备配置
 device:
-  type: "cpu"  # 可选: "auto", "cpu", "mps", "cuda"
+  type: "auto"  # 自动检测最快的设备 (优先级: cuda > mps > cpu)
   # auto: 自动检测 (优先级: cuda > mps > cpu)
   # cpu: 强制使用CPU (小模型推荐，稳定快速)
   # mps: 强制使用Apple Metal (需要大batch size才有优势)
@@ -25,13 +25,13 @@ data:
     # 如果配置了strategies列表,将忽略method字段
     strategies:
       - nearest_p
-      - forward
-      - backward
-      - interpolate
-      - mean
-      - median
       - day_copy
       - seasonal
+      - mean
+      - median
+      - interpolate
+      - forward
+      - backward
     
     # 单一方法模式 (如果strategies未配置或为空,则使用此方法)
     # method: "nearest_p"  # 可选: nearest_p, forward, backward, interpolate, mean, median, day_copy, seasonal
@@ -48,13 +48,15 @@ target:
 
 # 特征工程配置
 features:
-  max_lag: 24
+  max_lag: 72  # 增加到72以捕获更长的历史模式
   roll_windows:
     - 6
     - 12
     - 24
+    - 48   # 新增: 2天的滚动窗口
+    - 168  # 新增: 1周的滚动窗口
   use_time_features: true
-  sequence_length: 24
+  sequence_length: 72  # 增加到72(3天)以捕获更多历史信息
   season_length: 24
   exog_cols:  # 使用电气特征作为外生变量
     - '定子电流'
@@ -66,8 +68,8 @@ features:
 # 评估配置
 evaluation:
   horizons: "1,2,3,4,5,6,7,8,9,10,11,12"  # 预测步长 (支持逗号分隔字符串或列表)
-  test_window: 100
-  n_splits: 1  # 交叉验证折数 (1=单次划分, 3=3折交叉验证)
+  test_window: 600  # 增加到600小时(25天)以获得更稳定的评估结果
+  n_splits: 1  # 使用3折交叉验证提高结果可靠性
   metrics:
     - RMSE
     - MAE
@@ -105,9 +107,9 @@ models:
   # LSTM
   lstm:
     enabled: true
-    hidden_size: 64
+    hidden_size: 128  # 增加模型容量
     num_layers: 2
-    dropout: 0.3
+    dropout: 0.2  # 降低dropout以减少欠拟合
     epochs: 100
     batch_size: 64
     learning_rate: 0.001
@@ -115,14 +117,14 @@ models:
   # Transformer
   transformer:
     enabled: true
-    d_model: 64
-    nhead: 4
-    num_encoder_layers: 2
-    num_decoder_layers: 2
-    dim_feedforward: 256
-    dropout: 0.2
+    d_model: 128  # 增加模型容量 (从64->128)
+    nhead: 8  # 增加注意力头数量 (从4->8)
+    num_encoder_layers: 3  # 增加编码器层数 (从2->3)
+    num_decoder_layers: 3  # 增加解码器层数 (从2->3)
+    dim_feedforward: 512  # 增加前馈网络维度 (从256->512)
+    dropout: 0.1  # 降低dropout (从0.2->0.1)
     epochs: 200
-    batch_size: 32
+    batch_size: 64  # 增加批次大小 (从32->64)
     learning_rate: 0.0005
 
 # 预测配置
