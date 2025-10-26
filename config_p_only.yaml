@@ -53,13 +53,14 @@ evaluation:
     - 12
     - 24
   test_window: 100
-  n_splits: 3
+  n_splits: 1  # 交叉验证折数 (1=单次划分, 3=3折交叉验证)
   metrics:
     - RMSE
     - MAE
     - SMAPE
     - WAPE
-    - ACC   # 近似准确率
+    - ACC_5   # 5%阈值准确率
+    - ACC_10  # 10%阈值准确率
 
 # 模型配置
 models:

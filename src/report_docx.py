@@ -10,6 +10,7 @@ from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from typing import Optional
+from src.config import load_config
 
 
 def add_heading_with_style(doc: Document, text: str, level: int = 1):
@@ -78,6 +79,9 @@ def generate_word_report(
     Returns:
         Path to generated report
     """
+    # Load configuration
+    config = load_config(config_path)
+    
     # Create document
     doc = Document()
     
@@ -94,7 +98,7 @@ def generate_word_report(
     doc.add_page_break()
     
     # Aggregate results - get all available metrics
-    metric_cols = [col for col in ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC'] 
+    metric_cols = [col for col in ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC_5', 'ACC_10'] 
                    if col in metrics_df.columns]
     agg_dict = {col: 'mean' for col in metric_cols}
     agg_results = metrics_df.groupby(['model', 'horizon', 'target']).agg(agg_dict).reset_index()
@@ -131,7 +135,8 @@ def generate_word_report(
         '适用于具有明显周期性模式的时间序列数据，如电力负荷的日周期或周周期特性。'
     )
     doc.add_paragraph('参数配置：', style='Heading 4')
-    doc.add_paragraph('seasonal_period: 96（对应24小时，每15分钟一个数据点）', style='List Bullet')
+    season_length = config.get('features', 'season_length', default=24)
+    doc.add_paragraph(f'seasonal_period: {season_length}（对应季节周期长度）', style='List Bullet')
     doc.add_paragraph()
     
     add_heading_with_style(doc, '2.3 随机森林（Random Forest）', level=2)
@@ -140,11 +145,9 @@ def generate_word_report(
         '该模型能够自动捕获特征之间的非线性关系，并提供特征重要性分析，具有较强的泛化能力和抗过拟合能力。'
     )
     doc.add_paragraph('参数配置：', style='Heading 4')
-    doc.add_paragraph('n_estimators: 100（决策树数量）', style='List Bullet')
-    doc.add_paragraph('max_depth: 10（树的最大深度）', style='List Bullet')
-    doc.add_paragraph('min_samples_split: 10（内部节点再划分所需最小样本数）', style='List Bullet')
-    doc.add_paragraph('min_samples_leaf: 5（叶节点最少样本数）', style='List Bullet')
-    doc.add_paragraph('random_state: 42（随机种子，保证结果可复现）', style='List Bullet')
+    rf_params = config.get('models', 'rf', default={})
+    doc.add_paragraph(f'n_estimators: {rf_params.get("n_estimators", 100)}（决策树数量）', style='List Bullet')
+    doc.add_paragraph(f'max_depth: {rf_params.get("max_depth", "None")}（树的最大深度）', style='List Bullet')
     doc.add_paragraph()
     
     add_heading_with_style(doc, '2.4 XGBoost', level=2)
@@ -154,12 +157,10 @@ def generate_word_report(
         '该算法在各类机器学习竞赛中表现优异，广泛应用于时间序列预测任务。'
     )
     doc.add_paragraph('参数配置：', style='Heading 4')
-    doc.add_paragraph('n_estimators: 100（提升轮数）', style='List Bullet')
-    doc.add_paragraph('max_depth: 6（树的最大深度）', style='List Bullet')
-    doc.add_paragraph('learning_rate: 0.1（学习率，控制每棵树的权重）', style='List Bullet')
-    doc.add_paragraph('subsample: 0.8（训练每棵树时的样本采样比例）', style='List Bullet')
-    doc.add_paragraph('colsample_bytree: 0.8（构建每棵树时的特征采样比例）', style='List Bullet')
-    doc.add_paragraph('random_state: 42', style='List Bullet')
+    xgb_params = config.get('models', 'xgb', default={})
+    doc.add_paragraph(f'n_estimators: {xgb_params.get("n_estimators", 100)}（提升轮数）', style='List Bullet')
+    doc.add_paragraph(f'max_depth: {xgb_params.get("max_depth", 6)}（树的最大深度）', style='List Bullet')
+    doc.add_paragraph(f'learning_rate: {xgb_params.get("learning_rate", 0.1)}（学习率，控制每棵树的权重）', style='List Bullet')
     doc.add_paragraph()
     
     add_heading_with_style(doc, '2.5 LSTM（长短期记忆网络）', level=2)
@@ -169,13 +170,15 @@ def generate_word_report(
         '避免了传统RNN的梯度消失问题。适用于复杂的时序模式识别和多步预测任务。'
     )
     doc.add_paragraph('参数配置：', style='Heading 4')
-    doc.add_paragraph('hidden_size: 64（隐藏层维度）', style='List Bullet')
-    doc.add_paragraph('num_layers: 2（LSTM堆叠层数）', style='List Bullet')
-    doc.add_paragraph('dropout: 0.2（防止过拟合的丢弃率）', style='List Bullet')
-    doc.add_paragraph('epochs: 50（训练轮数）', style='List Bullet')
-    doc.add_paragraph('batch_size: 32（批次大小）', style='List Bullet')
-    doc.add_paragraph('learning_rate: 0.001（Adam优化器学习率）', style='List Bullet')
-    doc.add_paragraph('硬件加速: 自动检测CUDA GPU / Apple MPS / CPU', style='List Bullet')
+    lstm_params = config.get('models', 'lstm', default={})
+    doc.add_paragraph(f'hidden_size: {lstm_params.get("hidden_size", 64)}（隐藏层维度）', style='List Bullet')
+    doc.add_paragraph(f'num_layers: {lstm_params.get("num_layers", 2)}（LSTM堆叠层数）', style='List Bullet')
+    doc.add_paragraph(f'dropout: {lstm_params.get("dropout", 0.2)}（防止过拟合的丢弃率）', style='List Bullet')
+    doc.add_paragraph(f'epochs: {lstm_params.get("epochs", 50)}（训练轮数）', style='List Bullet')
+    doc.add_paragraph(f'batch_size: {lstm_params.get("batch_size", 32)}（批次大小）', style='List Bullet')
+    doc.add_paragraph(f'learning_rate: {lstm_params.get("learning_rate", 0.001)}（Adam优化器学习率）', style='List Bullet')
+    device_type = config.get('device', 'type', default='auto')
+    doc.add_paragraph(f'硬件加速: {device_type.upper()}', style='List Bullet')
     doc.add_paragraph()
     
     add_heading_with_style(doc, '2.6 Transformer', level=2)
@@ -186,16 +189,18 @@ def generate_word_report(
         '并在自然语言处理和时间序列预测等领域取得了显著成果。'
     )
     doc.add_paragraph('参数配置：', style='Heading 4')
-    doc.add_paragraph('d_model: 64（模型维度）', style='List Bullet')
-    doc.add_paragraph('nhead: 4（多头注意力的头数）', style='List Bullet')
-    doc.add_paragraph('num_encoder_layers: 2（编码器层数）', style='List Bullet')
-    doc.add_paragraph('num_decoder_layers: 2（解码器层数）', style='List Bullet')
-    doc.add_paragraph('dim_feedforward: 256（前馈网络维度）', style='List Bullet')
-    doc.add_paragraph('dropout: 0.1（丢弃率）', style='List Bullet')
-    doc.add_paragraph('epochs: 50（训练轮数）', style='List Bullet')
-    doc.add_paragraph('batch_size: 32（批次大小）', style='List Bullet')
-    doc.add_paragraph('learning_rate: 0.001（Adam优化器学习率）', style='List Bullet')
-    doc.add_paragraph('硬件加速: 自动检测CUDA GPU / Apple MPS / CPU', style='List Bullet')
+    trans_params = config.get('models', 'transformer', default={})
+    doc.add_paragraph(f'd_model: {trans_params.get("d_model", 64)}（模型维度）', style='List Bullet')
+    doc.add_paragraph(f'nhead: {trans_params.get("nhead", 4)}（多头注意力的头数）', style='List Bullet')
+    doc.add_paragraph(f'num_encoder_layers: {trans_params.get("num_encoder_layers", 2)}（编码器层数）', style='List Bullet')
+    doc.add_paragraph(f'num_decoder_layers: {trans_params.get("num_decoder_layers", 2)}（解码器层数）', style='List Bullet')
+    doc.add_paragraph(f'dim_feedforward: {trans_params.get("dim_feedforward", 256)}（前馈网络维度）', style='List Bullet')
+    doc.add_paragraph(f'dropout: {trans_params.get("dropout", 0.1)}（丢弃率）', style='List Bullet')
+    doc.add_paragraph(f'epochs: {trans_params.get("epochs", 50)}（训练轮数）', style='List Bullet')
+    doc.add_paragraph(f'batch_size: {trans_params.get("batch_size", 32)}（批次大小）', style='List Bullet')
+    doc.add_paragraph(f'learning_rate: {trans_params.get("learning_rate", 0.001)}（Adam优化器学习率）', style='List Bullet')
+    device_type = config.get('device', 'type', default='auto')
+    doc.add_paragraph(f'硬件加速: {device_type.upper()}', style='List Bullet')
     doc.add_paragraph()
     
     doc.add_paragraph()
@@ -211,14 +216,15 @@ def generate_word_report(
     )
     
     add_heading_with_style(doc, '3.2 评估指标', level=2)
-    doc.add_paragraph('本项目采用以下五项指标综合评估模型性能：')
+    doc.add_paragraph('本项目采用以下六项指标综合评估模型性能：')
     
     metrics_list = [
         'RMSE (Root Mean Squared Error): 均方根误差，反映预测误差的绝对大小，对大误差更敏感。越小越好，单位与预测值相同。',
         'MAE (Mean Absolute Error): 平均绝对误差，反映预测误差的平均水平。越小越好，单位与预测值相同。',
         'SMAPE (Symmetric Mean Absolute Percentage Error): 对称平均绝对百分比误差，百分比形式的相对误差。越小越好，取值范围0-200%。',
         'WAPE (Weighted Absolute Percentage Error): 加权绝对百分比误差，相比MAPE更稳健，不受零值影响。越小越好，通常在0-100%范围内。',
-        'ACC (Accuracy): 近似准确率，表示预测误差在5%阈值内的样本比例。越大越好，取值范围0-100%。'
+        'ACC_5 (Accuracy 5%): 近似准确率（5%阈值），表示预测误差在5%阈值内的样本比例。越大越好，取值范围0-100%。',
+        'ACC_10 (Accuracy 10%): 近似准确率（10%阈值），表示预测误差在10%阈值内的样本比例。越大越好，取值范围0-100%。'
     ]
     
     for metric_desc in metrics_list:
@@ -226,7 +232,8 @@ def generate_word_report(
     
     doc.add_paragraph(
         '说明：RMSE、MAE、SMAPE、WAPE四项指标越小表示模型性能越好；'
-        'ACC指标越大表示模型性能越好。ACC=85%表示85%的预测误差在5%以内，直观反映预测结果的实用性。'
+        'ACC_5和ACC_10指标越大表示模型性能越好。例如ACC_5=85%表示85%的预测误差在5%以内，'
+        'ACC_10=95%表示95%的预测误差在10%以内，直观反映预测结果的实用性。'
     )
     
     # Section 4: Results
@@ -245,7 +252,7 @@ def generate_word_report(
         
         target_data = agg_results[agg_results['target'] == target]
         
-        for metric in ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC']:
+        for metric in ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC_5', 'ACC_10']:
             if metric not in target_data.columns:
                 continue
                 
@@ -261,7 +268,7 @@ def generate_word_report(
             best_values = {}
             for col in pivot_data.columns:
                 if col != 'model':
-                    if metric == 'ACC':  # ACC越大越好
+                    if metric in ['ACC_5', 'ACC_10']:  # ACC越大越好
                         best_values[col] = pivot_data[col].max()
                     else:  # 其他指标越小越好
                         best_values[col] = pivot_data[col].min()
@@ -368,15 +375,15 @@ def generate_word_report(
             style='List Bullet'
         )
         doc.add_paragraph(
-            '纵轴：各指标的数值。RMSE/MAE/SMAPE/WAPE越小越好（红色系）；ACC越大越好（绿色系）。',
+            '纵轴：各指标的数值。RMSE/MAE/SMAPE/WAPE越小越好（红色系）；ACC_5/ACC_10越大越好（绿色系）。',
             style='List Bullet'
         )
         doc.add_paragraph(
-            '5个子图全面展示模型性能：左上RMSE、右上MAE、左中SMAPE、右中WAPE、左下ACC。',
+            '6个子图全面展示模型性能：RMSE、MAE、SMAPE、WAPE、ACC_5、ACC_10。',
             style='List Bullet'
         )
         doc.add_paragraph(
-            '综合分析：理想模型应在所有子图中表现优异（前4个指标低、ACC高），且曲线平稳。',
+            '综合分析：理想模型应在所有子图中表现优异（前4个指标低、后2个ACC高），且曲线平稳。',
             style='List Bullet'
         )
         doc.add_paragraph()
@@ -416,11 +423,11 @@ def generate_word_report(
         doc.add_paragraph('有功功率（P）预测最优模型：', style='Heading 4')
         
         best_models = {}
-        for metric in ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC']:
+        for metric in ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC_5', 'ACC_10']:
             if metric in target_data.columns:
                 metric_means = target_data.groupby('model')[metric].mean()
                 if not metric_means.empty:
-                    if metric == 'ACC':  # ACC越大越好
+                    if metric in ['ACC_5', 'ACC_10']:  # ACC越大越好
                         best_model = metric_means.idxmax()
                         best_value = metric_means.max()
                     else:  # 其他指标越小越好

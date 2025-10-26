@@ -110,6 +110,16 @@ def acc(y_true: np.ndarray, y_pred: np.ndarray, threshold: float = 0.05) -> floa
     return 100.0 * accurate_count / total_count
 
 
+def acc_5(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """ACC with 5% threshold"""
+    return acc(y_true, y_pred, threshold=0.05)
+
+
+def acc_10(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """ACC with 10% threshold"""
+    return acc(y_true, y_pred, threshold=0.10)
+
+
 def eval_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,
@@ -122,20 +132,22 @@ def eval_metrics(
         y_true: True values
         y_pred: Predicted values
         metric_names: List of metric names to compute
-                      Default: ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC']
+                      Default: ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC_5', 'ACC_10']
     
     Returns:
         Dictionary mapping metric names to values
     """
     if metric_names is None:
-        metric_names = ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC']
+        metric_names = ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC_5', 'ACC_10']
     
     metric_funcs = {
         'RMSE': rmse,
         'MAE': mae,
         'SMAPE': smape,
         'WAPE': wape,
-        'ACC': acc
+        'ACC': acc,
+        'ACC_5': acc_5,
+        'ACC_10': acc_10
     }
     
     results = {}
