@@ -157,22 +157,32 @@ def load_data(
     # Sort by time
     df.sort_index(inplace=True)
     
-    # Resample if frequency specified
-    if freq:
-        df = df.resample(freq).mean()
-    
-    # Interpolate short gaps only
-    if interp_limit > 0:
-        for col in df.columns:
-            df[col] = df[col].interpolate(method='linear', limit=interp_limit, limit_area='inside')
+    # Note: Data is already in hourly frequency, no resample needed
+    # Resampling would create NaN for missing timestamps
+    # Just keep the original data points
     
     # Ensure numeric types
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     
-    print(f"Loaded data shape: {df.shape}")
-    print(f"Date range: {df.index.min()} to {df.index.max()}")
-    print(f"Missing values - P: {df['P'].isna().sum()}, Q: {df['Q'].isna().sum()}")
+    # Check for missing timestamps (gaps in time series)
+    if len(df) > 1:
+        time_range = (df.index.max() - df.index.min())
+        expected_points = int(time_range.total_seconds() / 3600) + 1  # Assuming hourly data
+        actual_points = len(df)
+        missing_timestamps = expected_points - actual_points
+        
+        print(f"Loaded data shape: {df.shape}")
+        print(f"Date range: {df.index.min()} to {df.index.max()}")
+        if missing_timestamps > 0:
+            print(f"⚠️  Time series has {missing_timestamps} missing timestamps (gaps in data)")
+            print(f"   Expected {expected_points} hourly points, found {actual_points}")
+        print(f"Missing values - P: {df['P'].isna().sum()}, Q: {df['Q'].isna().sum()}")
+    else:
+        print(f"Loaded data shape: {df.shape}")
+        print(f"Date range: {df.index.min()} to {df.index.max()}")
+        print(f"Missing values - P: {df['P'].isna().sum()}, Q: {df['Q'].isna().sum()}")
+    
     if exog_cols:
         for col in df.columns:
             if col not in ['P', 'Q']:
@@ -229,7 +239,11 @@ def generate_diagnostic_plots(df: pd.DataFrame, output_dir: str = "outputs/figur
     plt.savefig(output_path / 'data_overview.png', dpi=150, bbox_inches='tight')
     plt.close()
     
-    # Missing data heatmap
+    # Check for time gaps
+    time_diffs = df.index.to_series().diff()
+    large_gaps = time_diffs[time_diffs > pd.Timedelta(hours=1)]
+    
+    # Missing data visualization
     fig, ax = plt.subplots(figsize=(12, 4))
     
     missing = df.isna().astype(int)
@@ -238,8 +252,22 @@ def generate_diagnostic_plots(df: pd.DataFrame, output_dir: str = "outputs/figur
         ax.set_yticks(range(len(df.columns)))
         ax.set_yticklabels(df.columns, fontsize=10)
         ax.set_xlabel('时间索引', fontsize=12)
-        ax.set_title('缺失值分布图', fontsize=14, fontweight='bold')
+        ax.set_title('字段缺失值分布图', fontsize=14, fontweight='bold')
         plt.colorbar(im, ax=ax, label='缺失(1) / 存在(0)')
+    elif len(large_gaps) > 0:
+        # Show time gaps info
+        gap_info = f'数据字段完整，但时间序列有 {len(large_gaps)} 处时间间隙\n'
+        gap_info += f'最大间隙: {large_gaps.max()}\n'
+        gap_info += '间隙位置:\n'
+        for idx, gap in large_gaps.head(5).items():
+            gap_info += f'  {idx}: {gap}\n'
+        if len(large_gaps) > 5:
+            gap_info += f'  ... 还有 {len(large_gaps)-5} 处间隙'
+        
+        ax.text(0.5, 0.5, gap_info, ha='center', va='center', fontsize=12, 
+                family='monospace', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        ax.set_title('时间间隙分析', fontsize=14, fontweight='bold')
+        ax.axis('off')
     else:
         ax.text(0.5, 0.5, '数据完整，无缺失值', ha='center', va='center', fontsize=16)
         ax.set_title('缺失值分布图', fontsize=14, fontweight='bold')

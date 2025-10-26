@@ -5,12 +5,12 @@
 data:
   data_path: "data/raw"
   file_pattern: "*.csv"  # 或 "*.xlsx"
-  time_col: null  # 自动检测，如需指定则填写列名
-  p_col: null     # 自动检测，如需指定则填写列名
-  q_col: null     # 自动检测，如需指定则填写列名
-  freq: "h"       # 时间频率: h=小时, D=日, W=周, M=月, min=分钟, 15min=15分钟
-  tz: null        # 时区，如 "Asia/Shanghai"
-  interp_limit: 3 # 短缺口插值最大步数
+  time_col: "时间"     # 时间列名
+  p_col: "有功"       # 有功功率列名
+  q_col: "无功"       # 无功功率列名
+  freq: "H"          # 时间频率: H=小时, D=日, W=周, M=月, T=分钟, 15T=15分钟
+  tz: null           # 时区，如 "Asia/Shanghai"
+  interp_limit: 3    # 短缺口插值最大步数
 
 # 特征工程配置
 features:
