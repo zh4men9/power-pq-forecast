@@ -524,7 +524,272 @@ outputs/
 
 ---
 
+---
+
 ## ⭐ 核心功能
+
+### 多模型 + 多策略 + 多步长
+
+- **多模型集成**：经典模型(Naive/SeasonalNaive)、机器学习(随机森林/XGBoost)、深度学习(LSTM/Transformer)
+- **多种填充策略**：8种数据填充方法(nearest_p/forward/backward/interpolate/mean/median/day_copy/seasonal)
+- **严格交叉验证**：时间序列专用Split，保证未来数据不泄露
+- **完整性能指标**：RMSE/MAE/SMAPE/WAPE/ACC_5/ACC_10 全方位评估
+- **多步预测**：支持1-n步预测，horizons可灵活配置
+- **自动报告生成**：生成Word和Markdown格式报告，包含图表和指标
+- **端到端流程**：数据加载→特征工程→模型训练→评估→报告生成
+
+---
+
+## 📖 配置参数详解
+
+### 数据配置 (data)
+
+#### `file_path` - 数据文件路径
+- **含义**：原始数据CSV文件的路径
+- **示例**：`data/raw/电气多特征.csv`
+- **要求**：文件必须包含时间列和目标变量(P)
+
+#### `target_column` - 目标变量
+- **含义**：需要预测的目标列名
+- **示例**：`P` (有功功率)
+- **说明**：可以是`P`、`Q`或其他数值列
+
+#### `interp_limit` - 最大连续插值数量
+- **含义**：线性插值时允许填充的最大连续缺失值数量
+- **示例**：`interp_limit: 3` 表示最多插值3个连续缺失点
+- **建议值**：
+  - 3-5: 保守策略，避免过度插值
+  - 10-20: 激进策略，适用于缺失较多的场景
+- **影响**：过大会引入不真实的数据，过小会导致删除过多样本
+
+#### `imputation` - 填充策略配置
+- **strategies** (列表): 多策略对比模式
+  ```yaml
+  strategies:
+    - nearest_p    # 基于P值接近性
+    - forward      # 前向填充
+    - interpolate  # 线性插值
+    - day_copy     # 日期复制
+  ```
+- **method** (字符串): 单一策略模式(strategies为空时生效)
+  ```yaml
+  method: "interpolate"
+  ```
+
+#### 各填充方法的专用参数
+
+| 参数 | 适用方法 | 含义 | 默认值 | 建议 |
+|------|----------|------|--------|------|
+| `target_p_value` | nearest_p | 目标有功功率参考值 | 400 | 选择数据集中常见的P值 |
+| `day_copy_days_back` | day_copy | 回溯天数 | 7 | 7(周周期), 1(日周期) |
+| `seasonal_period` | seasonal | 季节周期长度 | 24 | 24(小时), 96(15分钟) |
+
+---
+
+### 特征工程配置 (features)
+
+#### `max_lag` - 最大滞后步数
+- **含义**：使用多少个历史时刻的值作为输入特征
+- **示例**：`max_lag: 24` → 使用 `P_lag_1`, `P_lag_2`, ..., `P_lag_24`
+- **建议值**：
+  - 至少等于最大预测步长 (≥ max(horizons))
+  - 对于小时数据：24 (1天), 48 (2天), 168 (1周)
+- **影响**：
+  - 过小：模型学不到长期依赖关系
+  - 过大：特征维度爆炸，训练变慢
+
+#### `roll_windows` - 滚动窗口大小列表
+- **含义**：计算滚动统计(均值/标准差)的窗口大小
+- **示例**：`roll_windows: [6, 12, 24]`
+  - `P_roll_mean_6`: 过去6小时的均值
+  - `P_roll_std_12`: 过去12小时的标准差
+  - `P_roll_mean_24`: 过去24小时的均值
+- **建议值**：选择有业务意义的时间段
+  - 小时数据：`[6, 12, 24]` (1/4天, 1/2天, 1天)
+  - 15分钟数据：`[4, 24, 96]` (1小时, 6小时, 1天)
+- **影响**：增加窗口捕获更长期趋势，但可能引入滞后
+
+#### `use_time_features` - 是否使用时间特征
+- **含义**：添加时间的周期性编码(sin/cos变换)
+- **示例**：`true` → 生成 `hour_sin`, `hour_cos`, `dow_sin`, `dow_cos`, `month_sin`, `month_cos`
+- **建议**：`true`（对于有周期性的时间序列非常有效）
+- **原理**：使用sin/cos保持周期连续性(23点和0点相邻，而不是23→0跳变)
+
+#### `sequence_length` - 序列长度(深度学习)
+- **含义**：LSTM/Transformer的输入序列长度
+- **示例**：`sequence_length: 24` → 输入形状为 `[batch, 24, features]`
+- **建议值**：
+  - 小时数据：24 (捕获日周期)
+  - 15分钟数据：96 (捕获日周期)
+  - 需要周周期：168 (7天×24小时)
+- **影响**：
+  - 过小：学不到足够的时序模式
+  - 过大：训练慢，容易过拟合
+
+#### `season_length` - 季节周期长度
+- **含义**：SeasonalNaive模型使用的周期长度
+- **示例**：`season_length: 24` → "今天10点的值 = 昨天10点的值"
+- **建议值**：
+  - 小时数据：24 (日周期)
+  - 15分钟数据：96 (日周期)
+  - 周周期：168 (小时数据), 672 (15分钟数据)
+- **说明**：SeasonalNaive就是"复制N个周期前的值"
+
+---
+
+### 模型配置 (models)
+
+#### LSTM配置
+```yaml
+lstm:
+  batch_size: 64      # 批次大小，影响训练稳定性
+  epochs: 100         # 训练轮数
+  learning_rate: 0.001
+  hidden_size: 64     # 隐藏层神经元数量
+  num_layers: 2       # LSTM层数
+```
+
+**参数说明**：
+- `hidden_size`: 隐藏层维度，影响模型容量
+- `num_layers`: LSTM堆叠层数，增加可学习更复杂模式
+- `batch_size`: 建议64 (CPU环境下最优)
+
+#### Transformer配置
+```yaml
+transformer:
+  batch_size: 32      # Transformer通常用更小的batch
+  epochs: 200         # 需要更多轮数收敛
+  learning_rate: 0.0001
+  d_model: 64         # 模型维度
+  nhead: 4            # 多头注意力头数(必须能整除d_model)
+  num_layers: 2       # Transformer层数
+```
+
+**参数说明**：
+- `d_model`: 模型维度，影响特征表达能力
+- `nhead`: 多头注意力头数，必须能整除`d_model`
+- `batch_size`: 建议32 (Transformer内存需求更大)
+
+---
+
+### 评估配置 (evaluation)
+
+#### `horizons` - 预测步长列表
+- **含义**：需要预测未来多少步(多步预测)
+- **格式支持**：
+  ```yaml
+  # 方式1: 逗号分隔字符串(推荐)
+  horizons: "1,2,3,4,5,6,7,8,9,10,11,12"
+  
+  # 方式2: YAML列表
+  horizons: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+  
+  # 方式3: 非连续步长
+  horizons: "1,6,12,24"
+  ```
+- **建议**：
+  - 短期预测(1-12步): 适合日内调度
+  - 中期预测(1-24步): 适合日前规划
+  - 长期预测(1-168步): 适合周计划
+
+#### `metrics` - 评估指标列表
+- **含义**：用于评估模型性能的指标
+- **可选值**：`RMSE`, `MAE`, `SMAPE`, `WAPE`, `ACC_5`, `ACC_10`
+- **建议**：全部启用，多角度评估
+
+---
+
+### 交叉验证配置 (cv)
+
+#### `n_splits` - 折数
+- **含义**：将数据分成多少折进行交叉验证
+- **建议值**：
+  - `n_splits: 1` → 简单训练集/测试集划分(快速实验)
+  - `n_splits: 3` → 3折交叉验证(平衡速度和准确性)
+  - `n_splits: 5` → 5折交叉验证(更可靠，但慢5倍)
+- **影响**：
+  - 更多折数 → 更可靠的性能估计，但训练时间线性增加
+  - 1折 → 最快，但可能受数据划分影响
+
+#### `test_size` - 测试集比例
+- **含义**：测试集占总数据的比例
+- **示例**：`test_size: 0.2` → 80%训练，20%测试
+- **建议**：0.2-0.3
+
+---
+
+### 输出配置 (output)
+
+#### `base_dir` - 输出根目录
+- **含义**：所有结果保存的根目录
+- **示例**：`outputs/`
+
+#### `device` - 计算设备
+- **含义**：深度学习模型使用的设备
+- **可选值**：
+  - `"cpu"`: CPU计算(稳定，通用)
+  - `"cuda"`: NVIDIA GPU(需要CUDA)
+  - `"mps"`: Apple Silicon GPU(macOS专用)
+  - `"auto"`: 自动检测最佳设备
+- **建议**：
+  - 小数据集(<10000样本): `cpu` 更快
+  - 大数据集: `cuda` 或 `mps`
+
+---
+
+### 配置示例：典型场景
+
+#### 场景1: 快速实验(单策略，少horizon)
+```yaml
+data:
+  imputation:
+    method: "interpolate"  # 只用线性插值
+evaluation:
+  horizons: "1,6,12"      # 只测3个步长
+cv:
+  n_splits: 1             # 不做交叉验证
+```
+
+#### 场景2: 全面对比(多策略，多horizon)
+```yaml
+data:
+  imputation:
+    strategies:           # 对比所有方法
+      - nearest_p
+      - forward
+      - backward
+      - interpolate
+      - mean
+      - median
+      - day_copy
+      - seasonal
+evaluation:
+  horizons: "1,2,3,4,5,6,7,8,9,10,11,12"  # 完整步长
+cv:
+  n_splits: 3            # 3折交叉验证
+```
+
+#### 场景3: 生产环境(高鲁棒性)
+```yaml
+data:
+  interp_limit: 3        # 保守插值
+  imputation:
+    method: "day_copy"   # 使用稳定的日期复制
+    day_copy_days_back: 7
+features:
+  max_lag: 48            # 2天历史
+  roll_windows: [6, 12, 24, 48]  # 多尺度特征
+evaluation:
+  horizons: "1,6,12,24"  # 关键时间点
+cv:
+  n_splits: 5            # 高可靠性验证
+output:
+  device: "auto"         # 自动选择最佳设备
+```
+
+---
+
+## 📊 详细功能说明
 
 ### 1. 多模型预测框架
 
