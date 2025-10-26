@@ -11,6 +11,7 @@ from typing import Optional
 def generate_markdown_report(
     metrics_df: pd.DataFrame,
     config_path: str = "config.yaml",
+    figures_dir: str = "outputs/figures",
     output_path: str = "outputs/report/项目评估报告.md"
 ) -> str:
     """
@@ -19,6 +20,7 @@ def generate_markdown_report(
     Args:
         metrics_df: DataFrame with evaluation metrics
         config_path: Path to configuration file
+        figures_dir: Path to figures directory
         output_path: Path to save report
     
     Returns:
@@ -155,16 +157,55 @@ def generate_markdown_report(
             
             report_lines.append("")
         
-        # Add figure reference
-        report_lines.append(f"**图表**: 不同预测步长下的误差变化")
+    
+    # Add comprehensive figure references
+    report_lines.append("## 五、可视化结果")
+    report_lines.append("")
+    
+    # Calculate relative path from report to figures
+    report_path = Path(output_path)
+    figures_path = Path(figures_dir)
+    try:
+        rel_figures = Path('../figures')  # Relative path from report to figures
+    except:
+        rel_figures = figures_path
+    
+    report_lines.append("### 5.1 数据总览")
+    report_lines.append("")
+    report_lines.append("下图展示了有功功率和无功功率的时间序列曲线，用于初步了解数据的整体趋势和波动特征。")
+    report_lines.append("")
+    report_lines.append(f"![数据总览]({rel_figures}/data_overview.png)")
+    report_lines.append("")
+    
+    report_lines.append("### 5.2 缺失值分布")
+    report_lines.append("")
+    report_lines.append("下图展示了数据中的缺失值分布情况，有助于评估数据质量。")
+    report_lines.append("")
+    report_lines.append(f"![缺失值分布]({rel_figures}/missing_data.png)")
+    report_lines.append("")
+    
+    report_lines.append("### 5.3 模型误差对比")
+    report_lines.append("")
+    report_lines.append("下图展示了不同模型在各个预测步长下的RMSE误差变化情况。")
+    report_lines.append("")
+    report_lines.append(f"![误差对比]({rel_figures}/error_by_horizon.png)")
+    report_lines.append("")
+    
+    # Check if feature importance exists
+    feature_importance_path = figures_path / 'feature_importance.png'
+    if feature_importance_path.exists():
+        report_lines.append("### 5.4 特征重要性")
         report_lines.append("")
-        report_lines.append(f"![{target}误差曲线](../figures/error_by_horizon.png)")
+        report_lines.append("下图展示了树模型（随机森林/XGBoost）中各特征的重要性排序，")
+        report_lines.append("有助于理解哪些历史信息和外生变量对预测最有价值。")
+        report_lines.append("")
+        report_lines.append(f"![特征重要性]({rel_figures}/feature_importance.png)")
         report_lines.append("")
     
     # Conclusions
-    report_lines.append("## 五、结论与建议")
+    report_lines.append("## 六、结论与建议")
     report_lines.append("")
-    report_lines.append("### 5.1 主要发现")
+    report_lines.append("### 6.1 主要发现")
     report_lines.append("")
     
     # Find best model for each target
@@ -182,13 +223,13 @@ def generate_markdown_report(
             report_lines.append(f"  - {metric}最优模型: {best_model}")
     
     report_lines.append("")
-    report_lines.append("### 5.2 基线对比")
+    report_lines.append("### 6.2 基线对比")
     report_lines.append("")
     report_lines.append("所有模型均与朴素基线（Naive）和季节性朴素基线（SeasonalNaive）进行对比。")
     report_lines.append("只有在各项指标上显著优于基线的模型才具有实际应用价值。")
     report_lines.append("")
     
-    report_lines.append("### 5.3 建议")
+    report_lines.append("### 6.3 建议")
     report_lines.append("")
     report_lines.append("1. 模型选择应综合考虑预测精度、计算成本和可解释性")
     report_lines.append("2. 建议在实际部署前进行更多折数的交叉验证以确保稳定性")
@@ -197,20 +238,20 @@ def generate_markdown_report(
     report_lines.append("")
     
     # Appendix
-    report_lines.append("## 六、附录")
+    report_lines.append("## 七、附录")
     report_lines.append("")
-    report_lines.append("### 6.1 数据说明")
+    report_lines.append("### 7.1 数据说明")
     report_lines.append("")
     report_lines.append("- 数据来源: 电力系统监测数据")
     report_lines.append("- 包含变量: 有功功率（P）、无功功率（Q）")
     report_lines.append("- 时间粒度: 根据配置文件设定")
     report_lines.append("")
     
-    report_lines.append("### 6.2 可复现性")
+    report_lines.append("### 7.2 可复现性")
     report_lines.append("")
     report_lines.append(f"- 配置文件: `{config_path}`")
-    report_lines.append("- 详细指标: `outputs/metrics/cv_metrics.csv`")
-    report_lines.append("- 图表目录: `outputs/figures/`")
+    report_lines.append(f"- 详细指标: 见 `cv_metrics.csv`")
+    report_lines.append(f"- 图表目录: 见 `figures/` 目录")
     report_lines.append("- 执行命令: `python run_all.py --config config.yaml`")
     report_lines.append("")
     

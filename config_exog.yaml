@@ -72,9 +72,9 @@ models:
     learning_rate: 0.1
     n_jobs: -1
   
-  # LSTM
+    # LSTM
   lstm:
-    enabled: false        # 禁用以加快测试速度
+    enabled: true         # 启用LSTM以在error_by_horizon图中显示
     hidden_size: 64
     num_layers: 2
     dropout: 0.2
@@ -84,7 +84,7 @@ models:
   
   # Transformer
   transformer:
-    enabled: false        # 禁用以加快测试速度
+    enabled: true         # 启用Transformer以在error_by_horizon图中显示
     d_model: 64
     nhead: 4
     num_encoder_layers: 2

@@ -217,15 +217,37 @@ def generate_word_report(
             add_table_from_dataframe(doc, pivot_data)
     
     # Add error by horizon figure
-    add_heading_with_style(doc, '4.3 预测步长误差变化图', level=2)
+    add_heading_with_style(doc, '4.3 可视化结果', level=2)
     
+    # Data overview figure
+    data_overview_path = Path(figures_dir) / 'data_overview.png'
+    if data_overview_path.exists():
+        doc.add_paragraph('图1: 数据总览 - 有功功率和无功功率时间序列')
+        doc.add_picture(str(data_overview_path), width=Inches(6))
+        doc.add_paragraph()
+    
+    # Missing data figure
+    missing_data_path = Path(figures_dir) / 'missing_data.png'
+    if missing_data_path.exists():
+        doc.add_paragraph('图2: 缺失值分布图')
+        doc.add_picture(str(missing_data_path), width=Inches(6))
+        doc.add_paragraph()
+    
+    # Error by horizon figure
     error_fig_path = Path(figures_dir) / 'error_by_horizon.png'
     if error_fig_path.exists():
-        doc.add_paragraph('图1: 不同模型在各预测步长的误差对比')
+        doc.add_paragraph('图3: 不同模型在各预测步长的RMSE误差对比')
         doc.add_picture(str(error_fig_path), width=Inches(6))
         doc.add_paragraph()
     else:
         doc.add_paragraph('注: 误差变化图未生成')
+    
+    # Feature importance figure (if exists)
+    feature_importance_path = Path(figures_dir) / 'feature_importance.png'
+    if feature_importance_path.exists():
+        doc.add_paragraph('图4: 特征重要性排序（树模型）')
+        doc.add_picture(str(feature_importance_path), width=Inches(6))
+        doc.add_paragraph()
     
     # Section 5: Conclusions
     add_heading_with_style(doc, '五、结论与建议', level=1)
@@ -273,8 +295,8 @@ def generate_word_report(
     
     add_heading_with_style(doc, '6.2 可复现性', level=2)
     doc.add_paragraph(f'配置文件: {config_path}', style='List Bullet')
-    doc.add_paragraph('详细指标: outputs/metrics/cv_metrics.csv', style='List Bullet')
-    doc.add_paragraph('图表目录: outputs/figures/', style='List Bullet')
+    doc.add_paragraph('详细指标: 见 cv_metrics.csv', style='List Bullet')
+    doc.add_paragraph('图表目录: 见 figures/ 目录', style='List Bullet')
     doc.add_paragraph('执行命令: python run_all.py --config config.yaml', style='List Bullet')
     
     # Footer

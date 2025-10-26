@@ -193,9 +193,18 @@ def generate_diagnostic_plots(df: pd.DataFrame, output_dir: str = "outputs/figur
     import matplotlib
     from pathlib import Path
     
-    # Configure Chinese font
-    matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans', 'Arial Unicode MS', 
-                                               'Microsoft YaHei', 'PingFang SC', 'Noto Sans CJK SC']
+    # Configure Chinese font - comprehensive list for cross-platform support
+    matplotlib.rcParams['font.sans-serif'] = [
+        'SimHei',              # Windows
+        'Microsoft YaHei',     # Windows
+        'STHeiti',             # macOS
+        'PingFang SC',         # macOS
+        'Heiti SC',            # macOS
+        'WenQuanYi Micro Hei', # Linux
+        'Noto Sans CJK SC',    # Linux/Cross-platform
+        'DejaVu Sans',         # Fallback
+        'Arial Unicode MS'     # Fallback
+    ]
     matplotlib.rcParams['axes.unicode_minus'] = False
     
     output_path = Path(output_dir)
@@ -204,15 +213,17 @@ def generate_diagnostic_plots(df: pd.DataFrame, output_dir: str = "outputs/figur
     # Overview plot
     fig, axes = plt.subplots(2, 1, figsize=(12, 8))
     
-    axes[0].plot(df.index, df['P'], linewidth=0.5, alpha=0.8)
-    axes[0].set_ylabel('有功功率 P')
-    axes[0].set_title('数据总览')
+    axes[0].plot(df.index, df['P'], linewidth=0.5, alpha=0.8, label='有功功率 P')
+    axes[0].set_ylabel('有功功率 P', fontsize=12)
+    axes[0].set_title('电力数据总览', fontsize=14, fontweight='bold')
     axes[0].grid(True, alpha=0.3)
+    axes[0].legend(loc='best')
     
-    axes[1].plot(df.index, df['Q'], linewidth=0.5, alpha=0.8, color='orange')
-    axes[1].set_ylabel('无功功率 Q')
-    axes[1].set_xlabel('时间')
+    axes[1].plot(df.index, df['Q'], linewidth=0.5, alpha=0.8, color='orange', label='无功功率 Q')
+    axes[1].set_ylabel('无功功率 Q', fontsize=12)
+    axes[1].set_xlabel('时间', fontsize=12)
     axes[1].grid(True, alpha=0.3)
+    axes[1].legend(loc='best')
     
     plt.tight_layout()
     plt.savefig(output_path / 'data_overview.png', dpi=150, bbox_inches='tight')
@@ -224,14 +235,14 @@ def generate_diagnostic_plots(df: pd.DataFrame, output_dir: str = "outputs/figur
     missing = df.isna().astype(int)
     if missing.sum().sum() > 0:
         im = ax.imshow(missing.T, aspect='auto', cmap='YlOrRd', interpolation='nearest')
-        ax.set_yticks([0, 1])
-        ax.set_yticklabels(['P', 'Q'])
-        ax.set_xlabel('时间索引')
-        ax.set_title('缺失值分布')
-        plt.colorbar(im, ax=ax, label='缺失(1)或存在(0)')
+        ax.set_yticks(range(len(df.columns)))
+        ax.set_yticklabels(df.columns, fontsize=10)
+        ax.set_xlabel('时间索引', fontsize=12)
+        ax.set_title('缺失值分布图', fontsize=14, fontweight='bold')
+        plt.colorbar(im, ax=ax, label='缺失(1) / 存在(0)')
     else:
-        ax.text(0.5, 0.5, '无缺失值', ha='center', va='center', fontsize=16)
-        ax.set_title('缺失值分布')
+        ax.text(0.5, 0.5, '数据完整，无缺失值', ha='center', va='center', fontsize=16)
+        ax.set_title('缺失值分布图', fontsize=14, fontweight='bold')
         ax.axis('off')
     
     plt.tight_layout()

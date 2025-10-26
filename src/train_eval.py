@@ -273,13 +273,14 @@ def train_evaluate_deep_models(
     return results
 
 
-def run_evaluation(config: Config, df: pd.DataFrame) -> pd.DataFrame:
+def run_evaluation(config: Config, df: pd.DataFrame, metrics_dir: str = "outputs/metrics") -> pd.DataFrame:
     """
     Run full evaluation pipeline
     
     Args:
         config: Configuration object
         df: DataFrame with P and Q columns
+        metrics_dir: Directory to save metrics
     
     Returns:
         DataFrame with all evaluation results
@@ -324,7 +325,7 @@ def run_evaluation(config: Config, df: pd.DataFrame) -> pd.DataFrame:
     results_df = pd.DataFrame(all_results)
     
     # Save results
-    output_dir = Path("outputs/metrics")
+    output_dir = Path(metrics_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     results_df.to_csv(output_dir / "cv_metrics.csv", index=False)
     

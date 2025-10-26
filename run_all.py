@@ -5,6 +5,8 @@ Runs the complete pipeline: data loading -> training -> evaluation -> reporting
 import argparse
 from pathlib import Path
 import sys
+from datetime import datetime
+import shutil
 
 from src.config import load_config
 from src.data_io import load_data, generate_diagnostic_plots
@@ -23,6 +25,11 @@ def main():
                        help='配置文件路径 (默认: config_exog.yaml)')
     args = parser.parse_args()
     
+    # Create timestamped output directory
+    timestamp = datetime.now().strftime('%Y-%m-%d-%H%M')
+    output_base = Path('outputs')
+    output_dir = output_base / f'output-{timestamp}'
+    
     # Load configuration
     print("="*60)
     print("步骤 1/6: 加载配置文件")
@@ -30,6 +37,7 @@ def main():
     
     config = load_config(args.config)
     print(f"配置文件加载成功: {args.config}")
+    print(f"输出目录: {output_dir}")
     print()
     
     # Load data
@@ -69,7 +77,8 @@ def main():
     )
     
     # Generate diagnostic plots
-    generate_diagnostic_plots(df, output_dir='outputs/figures')
+    figures_dir = output_dir / 'figures'
+    generate_diagnostic_plots(df, output_dir=str(figures_dir))
     print()
     
     # Run evaluation
@@ -77,7 +86,8 @@ def main():
     print("步骤 3/6: 模型训练与评估")
     print("="*60)
     
-    results_df = run_evaluation(config, df)
+    metrics_dir = output_dir / 'metrics'
+    results_df = run_evaluation(config, df, metrics_dir=str(metrics_dir))
     print()
     
     # Generate plots
@@ -91,7 +101,7 @@ def main():
     plot_error_by_horizon(
         results_df,
         metric_name='RMSE',
-        output_path='outputs/figures/error_by_horizon.png',
+        output_path=str(figures_dir / 'error_by_horizon.png'),
         dpi=config.get('plotting', 'fig_dpi', default=150)
     )
     
@@ -102,10 +112,12 @@ def main():
     print("步骤 5/6: 生成Markdown报告")
     print("="*60)
     
+    report_dir = output_dir / 'report'
     md_report_path = generate_markdown_report(
         results_df,
         config_path=args.config,
-        output_path='outputs/report/项目评估报告.md'
+        figures_dir=str(figures_dir),
+        output_path=str(report_dir / '项目评估报告.md')
     )
     print()
     
@@ -117,19 +129,27 @@ def main():
     word_report_path = generate_word_report(
         results_df,
         config_path=args.config,
-        figures_dir='outputs/figures',
-        output_path='outputs/report/项目评估报告.docx'
+        figures_dir=str(figures_dir),
+        output_path=str(report_dir / '项目评估报告.docx')
     )
     print()
+    
+    # Copy to latest outputs folder for convenience
+    latest_dir = output_base / 'latest'
+    if latest_dir.exists():
+        shutil.rmtree(latest_dir)
+    shutil.copytree(output_dir, latest_dir)
     
     # Summary
     print("="*60)
     print("运行完成!")
     print("="*60)
-    print(f"指标表路径: outputs/metrics/cv_metrics.csv")
-    print(f"图表目录: outputs/figures/")
-    print(f"Markdown报告: {md_report_path}")
-    print(f"Word报告: {word_report_path}")
+    print(f"本次运行输出目录: {output_dir}")
+    print(f"最新结果链接: {latest_dir}")
+    print(f"  - 指标表: {metrics_dir / 'cv_metrics.csv'}")
+    print(f"  - 图表目录: {figures_dir}")
+    print(f"  - Markdown报告: {md_report_path}")
+    print(f"  - Word报告: {word_report_path}")
     print("="*60)
 
 

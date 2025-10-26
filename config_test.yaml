@@ -4,11 +4,11 @@
 # 数据配置
 data:
   data_path: "data/raw"
-  file_pattern: "*.xlsx"
+  file_pattern: "*.csv"  # 改为CSV以匹配现有数据
   time_col: null
   p_col: null
   q_col: null
-  freq: "h"  # 使用小写h避免警告
+  freq: "H"  # 使用大写H
   tz: null
   interp_limit: 3
 
