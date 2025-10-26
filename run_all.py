@@ -281,6 +281,8 @@ def main():
         report_dir = output_dir / 'report'
         report_dir.mkdir(parents=True, exist_ok=True)
         
+        generated_reports = []  # Track successfully generated reports
+        
         for idx, strategy in enumerate(strategies, 1):
             logging.info("")
             logging.info("█"*60)
@@ -307,6 +309,7 @@ def main():
                     forecast_df=forecast_df
                 )
                 logging.info(f"✓ Word报告已生成: {word_report_path}")
+                generated_reports.append(strategy)
                 logging.info("")
                 
             except Exception as e:
@@ -317,7 +320,9 @@ def main():
                 continue
         
         logging.info("="*60)
-        logging.info(f"✓ 所有策略运行完成! 共生成 {len(strategies)} 个报告")
+        logging.info(f"✓ 所有策略运行完成! 共生成 {len(generated_reports)}/{len(strategies)} 个报告")
+        if generated_reports:
+            logging.info(f"成功的策略: {', '.join(generated_reports)}")
         logging.info("="*60)
         
     else:
@@ -361,7 +366,9 @@ def main():
     logging.info(f"最新结果链接: {latest_dir}")
     logging.info(f"  - 日志文件: {log_file}")
     if strategies and len(strategies) > 0:
-        logging.info(f"  - 报告目录: {report_dir} (共 {len(strategies)} 个报告)")
+        # Count actual reports in the directory
+        report_files = list(report_dir.glob('项目评估报告_*.docx'))
+        logging.info(f"  - 报告目录: {report_dir} (实际生成 {len(report_files)}/{len(strategies)} 个报告)")
     else:
         logging.info(f"  - 报告目录: {report_dir}")
     logging.info("="*60)

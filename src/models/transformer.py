@@ -136,7 +136,12 @@ class PositionalEncoding(nn.Module):
 
 
 class TransformerModel(nn.Module):
-    """Transformer model for time series forecasting"""
+    """Transformer model for time series forecasting
+    
+    Supports two modes:
+    - Single output: predict one horizon at a time (output_size = n_targets)
+    - Multiple output: predict all horizons at once (output_size = n_targets * n_horizons)
+    """
     
     def __init__(
         self,
@@ -147,7 +152,8 @@ class TransformerModel(nn.Module):
         num_decoder_layers: int = 2,
         dim_feedforward: int = 256,
         dropout: float = 0.1,
-        output_size: int = 2
+        output_size: int = 2,
+        n_horizons: int = 1  # Number of forecast horizons (for multiple output)
     ):
         """
         Initialize Transformer model
@@ -160,12 +166,15 @@ class TransformerModel(nn.Module):
             num_decoder_layers: Number of decoder layers
             dim_feedforward: Dimension of feedforward network
             dropout: Dropout rate
-            output_size: Number of outputs
+            output_size: Number of outputs per horizon
+            n_horizons: Number of forecast horizons (for multiple output strategy)
         """
         super(TransformerModel, self).__init__()
         
         self.d_model = d_model
         self.input_size = input_size
+        self.n_horizons = n_horizons
+        self.output_size = output_size
         
         # Input projection
         self.input_proj = nn.Linear(input_size, d_model)
@@ -184,18 +193,18 @@ class TransformerModel(nn.Module):
             batch_first=True
         )
         
-        # Output projection
-        self.output_proj = nn.Linear(d_model, output_size)
+        # Output projection: output_size * n_horizons for multiple output
+        self.output_proj = nn.Linear(d_model, output_size * n_horizons)
     
     def forward(self, src):
         """
-        Forward pass for single-step prediction
+        Forward pass for single-step or multi-step prediction
         
         Args:
             src: Source sequence of shape (batch, seq_len, input_size)
         
         Returns:
-            Output tensor of shape (batch, output_size)
+            Output tensor of shape (batch, output_size * n_horizons)
         """
         # Project input to d_model dimension
         src = self.input_proj(src) * math.sqrt(self.d_model)
@@ -217,7 +226,12 @@ class TransformerModel(nn.Module):
 
 
 class TransformerForecaster:
-    """Transformer forecaster wrapper"""
+    """Transformer forecaster wrapper
+    
+    Supports two strategies for multi-step forecasting:
+    - Direct: Train separate model for each horizon (n_horizons=1)
+    - Multiple Output: Train one model for all horizons (n_horizons=N)
+    """
     
     def __init__(
         self,
@@ -230,7 +244,8 @@ class TransformerForecaster:
         epochs: int = 50,
         batch_size: int = 32,
         learning_rate: float = 0.001,
-        device: Optional[str] = None
+        device: Optional[str] = None,
+        n_horizons: int = 1  # Number of horizons for multiple output strategy
     ):
         """
         Initialize Transformer forecaster
@@ -246,6 +261,7 @@ class TransformerForecaster:
             batch_size: Batch size
             learning_rate: Learning rate
             device: Device to use
+            n_horizons: Number of forecast horizons (for multiple output strategy)
         """
         self.d_model = d_model
         self.nhead = nhead
@@ -256,6 +272,7 @@ class TransformerForecaster:
         self.epochs = epochs
         self.batch_size = batch_size
         self.learning_rate = learning_rate
+        self.n_horizons = n_horizons
         
         # Set device from config or auto-detection
         if device is None:
@@ -302,14 +319,21 @@ class TransformerForecaster:
         
         Args:
             X: Input sequences of shape (n_samples, sequence_length, n_features)
-            y: Target values of shape (n_samples, n_targets)
+            y: Target values of shape:
+               - (n_samples, n_targets) for single horizon
+               - (n_samples, n_targets * n_horizons) for multiple horizons
         """
         # Prepare data
         X_tensor, y_tensor = self._prepare_data(X, y)
         
         # Determine dimensions
         input_size = X.shape[2]
-        output_size = y.shape[1] if len(y.shape) > 1 else 1
+        output_size_total = y.shape[1] if len(y.shape) > 1 else 1
+        
+        # Calculate output_size per horizon
+        output_size = output_size_total // self.n_horizons
+        
+        logging.info(f"      模型配置: n_horizons={self.n_horizons}, output_size={output_size} (total={output_size_total})")
         
         # Create model
         self.model = TransformerModel(
@@ -320,7 +344,8 @@ class TransformerForecaster:
             num_decoder_layers=self.num_decoder_layers,
             dim_feedforward=self.dim_feedforward,
             dropout=self.dropout,
-            output_size=output_size
+            output_size=output_size,
+            n_horizons=self.n_horizons
         ).to(self.device)
         
         logging.info(f"      模型已创建并移至设备: {self.device}")

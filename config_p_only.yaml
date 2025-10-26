@@ -75,6 +75,7 @@ evaluation:
     - WAPE
     - ACC_5   # 5%阈值准确率
     - ACC_10  # 10%阈值准确率
+  deep_learning_strategy: "multiple_output"  # 可选: "direct" 或 "multiple_output"
 
 # 模型配置
 models:

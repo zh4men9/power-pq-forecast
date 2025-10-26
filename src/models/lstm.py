@@ -96,7 +96,12 @@ def get_optimal_device(config_device: str = 'auto'):
 
 
 class LSTMModel(nn.Module):
-    """LSTM neural network for time series forecasting"""
+    """LSTM neural network for time series forecasting
+    
+    Supports two modes:
+    - Single output: predict one horizon at a time (output_size = n_targets)
+    - Multiple output: predict all horizons at once (output_size = n_targets * n_horizons)
+    """
     
     def __init__(
         self,
@@ -104,7 +109,8 @@ class LSTMModel(nn.Module):
         hidden_size: int = 64,
         num_layers: int = 2,
         output_size: int = 2,
-        dropout: float = 0.2
+        dropout: float = 0.2,
+        n_horizons: int = 1  # Number of forecast horizons (for multiple output)
     ):
         """
         Initialize LSTM model
@@ -113,13 +119,16 @@ class LSTMModel(nn.Module):
             input_size: Number of input features (P and Q)
             hidden_size: Size of hidden state
             num_layers: Number of LSTM layers
-            output_size: Number of outputs (2 for P and Q)
+            output_size: Number of outputs per horizon (2 for P and Q)
             dropout: Dropout rate
+            n_horizons: Number of forecast horizons (for multiple output strategy)
         """
         super(LSTMModel, self).__init__()
         
         self.hidden_size = hidden_size
         self.num_layers = num_layers
+        self.n_horizons = n_horizons
+        self.output_size = output_size
         
         self.lstm = nn.LSTM(
             input_size=input_size,
@@ -129,7 +138,8 @@ class LSTMModel(nn.Module):
             batch_first=True
         )
         
-        self.fc = nn.Linear(hidden_size, output_size)
+        # Output layer: output_size * n_horizons for multiple output
+        self.fc = nn.Linear(hidden_size, output_size * n_horizons)
     
     def forward(self, x):
         """
@@ -139,7 +149,7 @@ class LSTMModel(nn.Module):
             x: Input tensor of shape (batch, sequence_length, input_size)
         
         Returns:
-            Output tensor of shape (batch, output_size)
+            Output tensor of shape (batch, output_size * n_horizons)
         """
         # LSTM output: (batch, seq_len, hidden_size)
         lstm_out, _ = self.lstm(x)
@@ -154,7 +164,12 @@ class LSTMModel(nn.Module):
 
 
 class LSTMForecaster:
-    """LSTM forecaster wrapper"""
+    """LSTM forecaster wrapper
+    
+    Supports two strategies for multi-step forecasting:
+    - Direct: Train separate model for each horizon (n_horizons=1)
+    - Multiple Output: Train one model for all horizons (n_horizons=N)
+    """
     
     def __init__(
         self,
@@ -164,7 +179,8 @@ class LSTMForecaster:
         epochs: int = 50,
         batch_size: int = 32,
         learning_rate: float = 0.001,
-        device: Optional[str] = None
+        device: Optional[str] = None,
+        n_horizons: int = 1  # Number of horizons for multiple output strategy
     ):
         """
         Initialize LSTM forecaster
@@ -177,6 +193,7 @@ class LSTMForecaster:
             batch_size: Batch size
             learning_rate: Learning rate
             device: Device to use ('cuda', 'cpu', or None for auto)
+            n_horizons: Number of forecast horizons (for multiple output strategy)
         """
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -184,6 +201,7 @@ class LSTMForecaster:
         self.epochs = epochs
         self.batch_size = batch_size
         self.learning_rate = learning_rate
+        self.n_horizons = n_horizons
         
         # Set device from config or auto-detection
         if device is None:
@@ -278,7 +296,9 @@ class LSTMForecaster:
         
         Args:
             X: Input sequences of shape (n_samples, sequence_length, n_features)
-            y: Target values of shape (n_samples, n_targets)
+            y: Target values of shape:
+               - (n_samples, n_targets) for single horizon
+               - (n_samples, n_targets * n_horizons) for multiple horizons
         """
         
         logging.info(f"      [1/6] 准备数据 (X shape: {X.shape}, y shape: {y.shape})...")
@@ -288,16 +308,22 @@ class LSTMForecaster:
         logging.info(f"      [2/6] 确定模型维度...")
         # Determine dimensions
         input_size = X.shape[2]
-        output_size = y.shape[1] if len(y.shape) > 1 else 1
+        output_size_total = y.shape[1] if len(y.shape) > 1 else 1
         
-        logging.info(f"      [3/6] 创建LSTM模型 (input={input_size}, hidden={self.hidden_size}, output={output_size})...")
+        # Calculate output_size per horizon
+        output_size = output_size_total // self.n_horizons
+        
+        logging.info(f"      模型配置: n_horizons={self.n_horizons}, output_size={output_size} (total={output_size_total})")
+        
+        logging.info(f"      [3/6] 创建LSTM模型 (input={input_size}, hidden={self.hidden_size}, output={output_size}, horizons={self.n_horizons})...")
         # Create model
         self.model = LSTMModel(
             input_size=input_size,
             hidden_size=self.hidden_size,
             num_layers=self.num_layers,
             output_size=output_size,
-            dropout=self.dropout
+            dropout=self.dropout,
+            n_horizons=self.n_horizons
         ).to(self.device)
         
         logging.info(f"      [4/6] 模型已创建并移至设备: {self.device}")

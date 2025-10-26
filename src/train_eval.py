@@ -245,8 +245,11 @@ def train_evaluate_deep_models_once(
     config: Config
 ) -> Tuple[List[Dict], Dict]:
     """
-    Train deep learning models ONCE and evaluate on all horizons
-    This avoids redundant training for each horizon
+    Train deep learning models using specified strategy
+    
+    Strategies:
+    - multiple_output: Train ONE model to predict all horizons (fast, default)
+    - direct: Train SEPARATE model for each horizon (slow, may be more accurate)
     
     Args:
         df: DataFrame with P, Q and optionally exogenous columns
@@ -257,6 +260,27 @@ def train_evaluate_deep_models_once(
     Returns:
         Tuple of (results list, trained models dict)
     """
+    # Get strategy from config
+    strategy = config.get('evaluation', 'deep_learning_strategy', default='multiple_output')
+    
+    if strategy == 'multiple_output':
+        return _train_evaluate_multiple_output(df, horizons, cv_splitter, config)
+    else:  # direct
+        return _train_evaluate_direct(df, horizons, cv_splitter, config)
+
+
+def _train_evaluate_multiple_output(
+    df: pd.DataFrame,
+    horizons: List[int],
+    cv_splitter: TimeSeriesSplit,
+    config: Config
+) -> Tuple[List[Dict], Dict]:
+    """
+    Multiple Output Strategy: Train ONE model for ALL horizons
+    
+    This is much faster as it only trains 2 models total (LSTM + Transformer)
+    instead of 2*N models where N is the number of horizons.
+    """
     results = []
     trained_models = {}
     
@@ -264,9 +288,188 @@ def train_evaluate_deep_models_once(
     target_cols = get_target_columns(config)
     sequence_length = config.get('features', 'sequence_length', default=24)
     exog_cols = config.get('features', 'exog_cols', default=[])
+    n_targets = len(target_cols)
+    n_horizons = len(horizons)
     
-    # Prepare sequences for EACH horizon (we need different Y for different horizons)
-    # But we'll train models only ONCE per horizon
+    logging.info(f"\n{'='*60}")
+    logging.info(f"多输出策略 (Multiple Output Strategy)")
+    logging.info(f"{'='*60}")
+    logging.info(f"  将训练 1 个模型预测所有 {n_horizons} 个预测步长")
+    logging.info(f"  预测目标: {target_cols} ({n_targets} 个)")
+    logging.info(f"  预测步长: {horizons}")
+    logging.info(f"  训练效率: {n_horizons}x 加速 🚀")
+    logging.info(f"{'='*60}\n")
+    
+    # Prepare data for ALL horizons at once
+    # X will be the same, but Y will be stacked [Y_h1, Y_h2, ..., Y_hn]
+    logging.info(f"准备多输出数据...")
+    
+    # Get X from first horizon (same for all)
+    X_seq, _ = prepare_sequences(df, sequence_length=sequence_length, 
+                                 horizon=horizons[0], exog_cols=exog_cols,
+                                 target_cols=target_cols)
+    
+    # Stack Y for all horizons
+    Y_all_horizons = []
+    for horizon in horizons:
+        _, Y_h = prepare_sequences(df, sequence_length=sequence_length, 
+                                   horizon=horizon, exog_cols=exog_cols,
+                                   target_cols=target_cols)
+        Y_all_horizons.append(Y_h)
+    
+    # Y shape: (n_samples, n_targets * n_horizons)
+    Y_seq = np.hstack(Y_all_horizons)
+    
+    logging.info(f"  X shape: {X_seq.shape}")
+    logging.info(f"  Y shape: {Y_seq.shape} ({n_targets} targets × {n_horizons} horizons)")
+    
+    # Initialize models with n_horizons parameter
+    models = {}
+    
+    if config.get('models', 'lstm', 'enabled', default=False):
+        lstm_params = config.get('models', 'lstm', default={})
+        device_type = config.get('device', 'type', default='cpu')
+        
+        logging.info(f"\n初始化 LSTM 模型 (多输出):")
+        logging.info(f"  hidden_size={lstm_params.get('hidden_size', 64)}")
+        logging.info(f"  num_layers={lstm_params.get('num_layers', 2)}")
+        logging.info(f"  dropout={lstm_params.get('dropout', 0.2)}")
+        logging.info(f"  epochs={lstm_params.get('epochs', 50)}")
+        logging.info(f"  batch_size={lstm_params.get('batch_size', 32)}")
+        logging.info(f"  learning_rate={lstm_params.get('learning_rate', 0.001)}")
+        logging.info(f"  n_horizons={n_horizons}")
+        
+        models['LSTM'] = LSTMForecaster(
+            hidden_size=lstm_params.get('hidden_size', 64),
+            num_layers=lstm_params.get('num_layers', 2),
+            dropout=lstm_params.get('dropout', 0.2),
+            epochs=lstm_params.get('epochs', 50),
+            batch_size=lstm_params.get('batch_size', 32),
+            learning_rate=lstm_params.get('learning_rate', 0.001),
+            device=device_type,
+            n_horizons=n_horizons
+        )
+    
+    if config.get('models', 'transformer', 'enabled', default=False):
+        trans_params = config.get('models', 'transformer', default={})
+        device_type = config.get('device', 'type', default='cpu')
+        
+        logging.info(f"\n初始化 Transformer 模型 (多输出):")
+        logging.info(f"  d_model={trans_params.get('d_model', 64)}")
+        logging.info(f"  nhead={trans_params.get('nhead', 4)}")
+        logging.info(f"  num_encoder_layers={trans_params.get('num_encoder_layers', 2)}")
+        logging.info(f"  num_decoder_layers={trans_params.get('num_decoder_layers', 2)}")
+        logging.info(f"  dim_feedforward={trans_params.get('dim_feedforward', 256)}")
+        logging.info(f"  dropout={trans_params.get('dropout', 0.1)}")
+        logging.info(f"  epochs={trans_params.get('epochs', 50)}")
+        logging.info(f"  batch_size={trans_params.get('batch_size', 32)}")
+        logging.info(f"  learning_rate={trans_params.get('learning_rate', 0.001)}")
+        logging.info(f"  n_horizons={n_horizons}")
+        
+        models['Transformer'] = TransformerForecaster(
+            d_model=trans_params.get('d_model', 64),
+            nhead=trans_params.get('nhead', 4),
+            num_encoder_layers=trans_params.get('num_encoder_layers', 2),
+            num_decoder_layers=trans_params.get('num_decoder_layers', 2),
+            dim_feedforward=trans_params.get('dim_feedforward', 256),
+            dropout=trans_params.get('dropout', 0.1),
+            epochs=trans_params.get('epochs', 50),
+            batch_size=trans_params.get('batch_size', 32),
+            learning_rate=trans_params.get('learning_rate', 0.001),
+            device=device_type,
+            n_horizons=n_horizons
+        )
+    
+    if not models:
+        return results, trained_models
+    
+    # Cross-validation: Train ONCE per fold
+    from tqdm import tqdm
+    
+    for fold_idx, (train_idx, test_idx) in enumerate(cv_splitter.split(X_seq)):
+        logging.info(f"\n📊 Fold {fold_idx + 1}/{cv_splitter.n_splits}")
+        
+        X_train = X_seq[train_idx]
+        Y_train = Y_seq[train_idx]
+        X_test = X_seq[test_idx]
+        Y_test = Y_seq[test_idx]
+        
+        logging.info(f"  训练集: {len(X_train)} 样本, 测试集: {len(X_test)} 样本")
+        
+        # Train each model ONCE
+        for model_name, model in models.items():
+            logging.info(f"  训练 {model_name} (一次性训练所有{n_horizons}个步长)...")
+            
+            # Fit model
+            model.fit(X_train, Y_train)
+            
+            # Predict: Y_pred shape = (n_samples, n_targets * n_horizons)
+            Y_pred = model.predict(X_test)
+            
+            # Extract predictions for each horizon and evaluate
+            for horizon_idx, horizon in enumerate(horizons):
+                # Extract predictions for this horizon
+                start_col = horizon_idx * n_targets
+                end_col = start_col + n_targets
+                
+                Y_pred_h = Y_pred[:, start_col:end_col]
+                Y_test_h = Y_test[:, start_col:end_col]
+                
+                # Evaluate for each target
+                for target_idx, target in enumerate(target_cols):
+                    y_true = Y_test_h[:, target_idx] if n_targets > 1 else Y_test_h
+                    y_pred = Y_pred_h[:, target_idx] if n_targets > 1 else Y_pred_h
+                    
+                    metrics = eval_metrics(y_true, y_pred,
+                                          metric_names=config.get('evaluation', 'metrics'))
+                    
+                    logging.info(f"    {model_name} (horizon={horizon}, {target}): RMSE={metrics['RMSE']:.4f}, MAE={metrics['MAE']:.4f}")
+                    
+                    results.append({
+                        'model': model_name,
+                        'horizon': horizon,
+                        'fold': fold_idx,
+                        'target': target,
+                        **metrics
+                    })
+        
+        # Save trained models (last fold)
+        if fold_idx == cv_splitter.n_splits - 1:
+            for model_name, model in models.items():
+                trained_models[f"{model_name}_all_horizons"] = model
+    
+    return results, trained_models
+
+
+def _train_evaluate_direct(
+    df: pd.DataFrame,
+    horizons: List[int],
+    cv_splitter: TimeSeriesSplit,
+    config: Config
+) -> Tuple[List[Dict], Dict]:
+    """
+    Direct Strategy: Train SEPARATE model for EACH horizon
+    
+    This trains N models per algorithm, which is slower but may be more accurate.
+    """
+    results = []
+    trained_models = {}
+    
+    # Get target columns to predict
+    target_cols = get_target_columns(config)
+    sequence_length = config.get('features', 'sequence_length', default=24)
+    exog_cols = config.get('features', 'exog_cols', default=[])
+    n_horizons = len(horizons)
+    
+    logging.info(f"\n{'='*60}")
+    logging.info(f"直接策略 (Direct Strategy)")
+    logging.info(f"{'='*60}")
+    logging.info(f"  将为每个预测步长训练独立模型")
+    logging.info(f"  预测步长: {horizons} ({n_horizons} 个)")
+    logging.info(f"  每个算法将训练 {n_horizons} 次")
+    logging.info(f"{'='*60}\n")
+    
+    # Prepare sequences for EACH horizon
     horizon_data = {}
     for horizon in horizons:
         logging.info(f"准备 horizon={horizon} 的序列数据...")
@@ -282,7 +485,7 @@ def train_evaluate_deep_models_once(
         lstm_params = config.get('models', 'lstm', default={})
         device_type = config.get('device', 'type', default='cpu')
         
-        logging.info(f"\n初始化 LSTM 模型:")
+        logging.info(f"\n初始化 LSTM 模型参数:")
         logging.info(f"  hidden_size={lstm_params.get('hidden_size', 64)}")
         logging.info(f"  num_layers={lstm_params.get('num_layers', 2)}")
         logging.info(f"  dropout={lstm_params.get('dropout', 0.2)}")
@@ -290,21 +493,16 @@ def train_evaluate_deep_models_once(
         logging.info(f"  batch_size={lstm_params.get('batch_size', 32)}")
         logging.info(f"  learning_rate={lstm_params.get('learning_rate', 0.001)}")
         
-        models['LSTM'] = LSTMForecaster(
-            hidden_size=lstm_params.get('hidden_size', 64),
-            num_layers=lstm_params.get('num_layers', 2),
-            dropout=lstm_params.get('dropout', 0.2),
-            epochs=lstm_params.get('epochs', 50),
-            batch_size=lstm_params.get('batch_size', 32),
-            learning_rate=lstm_params.get('learning_rate', 0.001),
-            device=device_type
-        )
+        models['LSTM'] = {
+            'params': lstm_params,
+            'device': device_type
+        }
     
     if config.get('models', 'transformer', 'enabled', default=False):
         trans_params = config.get('models', 'transformer', default={})
         device_type = config.get('device', 'type', default='cpu')
         
-        logging.info(f"\n初始化 Transformer 模型:")
+        logging.info(f"\n初始化 Transformer 模型参数:")
         logging.info(f"  d_model={trans_params.get('d_model', 64)}")
         logging.info(f"  nhead={trans_params.get('nhead', 4)}")
         logging.info(f"  num_encoder_layers={trans_params.get('num_encoder_layers', 2)}")
@@ -315,18 +513,10 @@ def train_evaluate_deep_models_once(
         logging.info(f"  batch_size={trans_params.get('batch_size', 32)}")
         logging.info(f"  learning_rate={trans_params.get('learning_rate', 0.001)}")
         
-        models['Transformer'] = TransformerForecaster(
-            d_model=trans_params.get('d_model', 64),
-            nhead=trans_params.get('nhead', 4),
-            num_encoder_layers=trans_params.get('num_encoder_layers', 2),
-            num_decoder_layers=trans_params.get('num_decoder_layers', 2),
-            dim_feedforward=trans_params.get('dim_feedforward', 256),
-            dropout=trans_params.get('dropout', 0.1),
-            epochs=trans_params.get('epochs', 50),
-            batch_size=trans_params.get('batch_size', 32),
-            learning_rate=trans_params.get('learning_rate', 0.001),
-            device=device_type
-        )
+        models['Transformer'] = {
+            'params': trans_params,
+            'device': device_type
+        }
     
     if not models:
         return results, trained_models
@@ -354,9 +544,38 @@ def train_evaluate_deep_models_once(
             
             logging.info(f"    训练集: {len(X_train)} 样本, 测试集: {len(X_test)} 样本")
             
-            # Train each model
-            for model_name, model in models.items():
+            # Train each model type
+            for model_name, model_config in models.items():
                 logging.info(f"    训练 {model_name} (horizon={horizon}, fold={fold_idx+1})...")
+                
+                # Create fresh model instance for this horizon
+                if model_name == 'LSTM':
+                    params = model_config['params']
+                    model = LSTMForecaster(
+                        hidden_size=params.get('hidden_size', 64),
+                        num_layers=params.get('num_layers', 2),
+                        dropout=params.get('dropout', 0.2),
+                        epochs=params.get('epochs', 50),
+                        batch_size=params.get('batch_size', 32),
+                        learning_rate=params.get('learning_rate', 0.001),
+                        device=model_config['device'],
+                        n_horizons=1  # Direct strategy: one horizon at a time
+                    )
+                else:  # Transformer
+                    params = model_config['params']
+                    model = TransformerForecaster(
+                        d_model=params.get('d_model', 64),
+                        nhead=params.get('nhead', 4),
+                        num_encoder_layers=params.get('num_encoder_layers', 2),
+                        num_decoder_layers=params.get('num_decoder_layers', 2),
+                        dim_feedforward=params.get('dim_feedforward', 256),
+                        dropout=params.get('dropout', 0.1),
+                        epochs=params.get('epochs', 50),
+                        batch_size=params.get('batch_size', 32),
+                        learning_rate=params.get('learning_rate', 0.001),
+                        device=model_config['device'],
+                        n_horizons=1  # Direct strategy: one horizon at a time
+                    )
                 
                 # Fit model
                 model.fit(X_train, Y_train)
@@ -560,19 +779,26 @@ def run_evaluation(config: Config, df: pd.DataFrame, metrics_dir: str = "outputs
     X, Y = create_features(df, max_lag=max_lag, roll_windows=roll_windows, 
                           use_time_features=use_time_features, exog_cols=exog_cols)
     
-    # Train deep learning models ONCE (only for horizon=1 or first horizon)
-    # These models will be reused for all horizons
-    deep_models_trained = {}
-    first_horizon = horizons[0] if horizons else 1
+    # Train deep learning models ONCE for all horizons
+    # Then evaluate on each horizon separately
+    cv_splitter = TimeSeriesSplit(test_window=test_window, n_splits=n_splits)
     
-    # For each horizon
+    logging.info(f"\n{'='*60}")
+    logging.info(f"步骤 3.1: 训练深度学习模型 (一次性训练，所有步长共享)")
+    logging.info(f"{'='*60}")
+    logging.info(f"🔧 训练深度学习模型 (将在所有{len(horizons)}个预测步长上评估)...")
+    deep_results, deep_models_trained = train_evaluate_deep_models_once(
+        df, horizons, cv_splitter, config
+    )
+    logging.info(f"✓ 深度学习模型训练完成")
+    logging.info("")
+    
+    # For each horizon: evaluate baseline and tree models
     for horizon_idx, horizon in enumerate(horizons):
         logging.info(f"\n{'='*60}")
-        logging.info(f"评估预测步长 = {horizon}")
+        logging.info(f"步骤 3.{horizon_idx+2}: 评估预测步长 = {horizon}")
         logging.info(f"{'='*60}")
         
-        # Create CV splitter
-        cv_splitter = TimeSeriesSplit(test_window=test_window, n_splits=n_splits)
         logging.info(f"交叉验证配置: {n_splits} 折, 测试窗口大小={test_window}")
         
         # Baseline models
@@ -587,21 +813,14 @@ def run_evaluation(config: Config, df: pd.DataFrame, metrics_dir: str = "outputs
         all_results.extend(tree_results)
         logging.info(f"✓ 树模型评估完成 ({len(tree_results)} 个结果)")
         
-        # Deep learning models - train only once on first horizon
-        logging.info(f"\n[3/3] 评估深度学习模型...")
-        if horizon_idx == 0:
-            # First horizon: train models and save them
-            logging.info(f"🔧 首次训练深度学习模型 (将重用于所有预测步长)...")
-            deep_results, deep_models_trained = train_evaluate_deep_models_once(
-                df, horizons, cv_splitter, config
-            )
-            # Only add results for current horizon
-            deep_results_current = [r for r in deep_results if r['horizon'] == horizon]
-            all_results.extend(deep_results_current)
-        else:
-            # Subsequent horizons: reuse trained models
-            logging.info(f"♻️ 重用已训练的深度学习模型...")
-            deep_results_current = [r for r in deep_results if r['horizon'] == horizon]
-            all_results.extend(deep_results_current)
-        
-        logging.info(f"✓ 深度学习模型评估完成 ({len(deep_results_current)} 个结果)")
+        # Deep learning models - reuse results from batch training
+        logging.info(f"\n[3/3] 添加深度学习模型结果...")
+        deep_results_current = [r for r in deep_results if r['horizon'] == horizon]
+        all_results.extend(deep_results_current)
+        logging.info(f"✓ 深度学习模型结果已添加 ({len(deep_results_current)} 个结果)")
+    
+    # Combine results and return
+    results_df = pd.DataFrame(all_results)
+    trained_models.update(deep_models_trained)
+    
+    return results_df, trained_models

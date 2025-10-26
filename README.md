@@ -1098,6 +1098,11 @@ evaluation:
   horizons: [1, 12, 24]          # 预测步长
   test_window: 100               # 测试窗口大小
   n_splits: 3                    # 交叉验证折数
+  
+  # 深度学习多步预测策略（新功能！）
+  # multiple_output: 训练1个模型预测所有horizons（快速，默认）
+  # direct: 为每个horizon训练独立模型（慢，可能更准确）
+  deep_learning_strategy: "multiple_output"
 
 # 模型配置（可启用/禁用特定模型）
 models:
