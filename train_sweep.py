@@ -15,9 +15,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from src.config import Config
 from src.data_io import load_data
 from src.features import prepare_sequences
-from src.models.transformer import TransformerModel
-from src.cv import time_series_split
-from src.metrics import calculate_metrics
+from src.models.transformer import TransformerForecaster
+from src.cv import rolling_origin_split
+from src.metrics import eval_metrics
 import numpy as np
 import logging
 
@@ -45,20 +45,20 @@ def train():
         # 3. 加载基础配置（使用sweep专用配置）
         base_config = Config("config_sweep.yaml")
         
-        # 4. 覆盖超参数
-        base_config.models['transformer']['d_model'] = config.d_model
-        base_config.models['transformer']['nhead'] = config.nhead
-        base_config.models['transformer']['num_encoder_layers'] = config.num_encoder_layers
-        base_config.models['transformer']['num_decoder_layers'] = config.num_decoder_layers
-        base_config.models['transformer']['dim_feedforward'] = config.dim_feedforward
-        base_config.models['transformer']['dropout'] = config.dropout
-        base_config.models['transformer']['learning_rate'] = config.learning_rate
-        base_config.models['transformer']['batch_size'] = config.batch_size
-        base_config.models['transformer']['epochs'] = config.epochs
+        # 4. 覆盖超参数（使用config.config字典访问）
+        base_config.config['models']['transformer']['d_model'] = config.d_model
+        base_config.config['models']['transformer']['nhead'] = config.nhead
+        base_config.config['models']['transformer']['num_encoder_layers'] = config.num_encoder_layers
+        base_config.config['models']['transformer']['num_decoder_layers'] = config.num_decoder_layers
+        base_config.config['models']['transformer']['dim_feedforward'] = config.dim_feedforward
+        base_config.config['models']['transformer']['dropout'] = config.dropout
+        base_config.config['models']['transformer']['learning_rate'] = config.learning_rate
+        base_config.config['models']['transformer']['batch_size'] = config.batch_size
+        base_config.config['models']['transformer']['epochs'] = config.epochs
         
-        base_config.features['sequence_length'] = config.sequence_length
-        base_config.features['max_lag'] = config.max_lag
-        base_config.evaluation['test_window'] = config.test_window
+        base_config.config['features']['sequence_length'] = config.sequence_length
+        base_config.config['features']['max_lag'] = config.max_lag
+        base_config.config['evaluation']['test_window'] = config.test_window
         
         # 5. 加载数据
         logging.info(f"📂 加载数据 (填充策略: {config.strategy})...")
@@ -97,23 +97,33 @@ def train():
         
         logging.info(f"   数据形状: {df_clean.shape}")
         
-        # 6. 准备序列数据
+        # 6. 确定目标列
+        target_cols = []
+        predict_p = base_config.config.get('target', {}).get('predict_p', True)
+        predict_q = base_config.config.get('target', {}).get('predict_q', False)
+        if predict_p:
+            target_cols.append('P')
+        if predict_q:
+            target_cols.append('Q')
+        
+        logging.info(f"   目标列: {target_cols}")
+        
+        # 7. 准备序列数据
         logging.info(f"🔄 准备序列数据 (horizon={config.horizon}, seq_len={config.sequence_length})...")
-        X, Y_dict = prepare_sequences(
-            df_clean=df_clean,
-            horizons=[config.horizon],
-            target_cols=base_config.target_cols,
-            exog_cols=base_config.features.get('exog_cols', []),
+        X, Y = prepare_sequences(
+            df=df_clean,
+            horizon=config.horizon,
+            target_cols=target_cols,
+            exog_cols=base_config.config.get('features', {}).get('exog_cols', []),
             sequence_length=config.sequence_length
         )
         
-        Y = Y_dict[config.horizon]
-        
-        # 7. 时间序列分割
-        splits = list(time_series_split(
+        # 8. 时间序列分割
+        splits = list(rolling_origin_split(
             n_samples=len(X),
+            test_window=config.test_window,
             n_splits=1,
-            test_size=config.test_window
+            gap=0
         ))
         train_idx, test_idx = splits[0]
         
@@ -124,37 +134,45 @@ def train():
         logging.info(f"  训练集: {len(X_train)} 样本")
         logging.info(f"  测试集: {len(X_test)} 样本")
         
-        # 8. 训练模型
+        # 9. 训练模型
         logging.info(f"🚀 开始训练Transformer...")
-        model = TransformerModel(base_config)
-        model.fit(
-            X_train, y_train,
-            n_horizons=1,
-            n_targets=len(base_config.target_cols)
+        model = TransformerForecaster(
+            d_model=config.d_model,
+            nhead=config.nhead,
+            num_encoder_layers=config.num_encoder_layers,
+            num_decoder_layers=config.num_decoder_layers,
+            dim_feedforward=config.dim_feedforward,
+            dropout=config.dropout,
+            epochs=config.epochs,
+            batch_size=config.batch_size,
+            learning_rate=config.learning_rate,
+            device=base_config.config.get('evaluation', {}).get('device', 'auto'),
+            n_horizons=1
         )
+        model.fit(X_train, y_train)
         
-        # 9. 预测
+        # 10. 预测
         logging.info(f"🔮 进行预测...")
-        y_pred = model.predict(X_test, n_targets=len(base_config.target_cols))
+        y_pred = model.predict(X_test)
         
-        # 10. 计算指标
+        # 11. 计算指标
         logging.info(f"📈 计算评估指标...")
         metrics = {}
-        for i, target_col in enumerate(base_config.target_cols):
+        for i, target_col in enumerate(target_cols):
             y_true_col = y_test[:, i]
             y_pred_col = y_pred[:, i]
             
-            col_metrics = calculate_metrics(
+            col_metrics = eval_metrics(
                 y_true=y_true_col,
                 y_pred=y_pred_col,
-                metrics_list=['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC_5', 'ACC_10']
+                metric_names=['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC_5', 'ACC_10']
             )
             
             # 添加前缀
             for metric_name, metric_value in col_metrics.items():
                 metrics[f"{target_col}_{metric_name}"] = metric_value
         
-        # 11. 记录指标到wandb
+        # 12. 记录指标到wandb
         rmse = metrics.get('P_RMSE', 999)
         mae = metrics.get('P_MAE', 999)
         acc_10 = metrics.get('P_ACC_10', 0)
