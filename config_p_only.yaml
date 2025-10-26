@@ -84,8 +84,8 @@ models:
     hidden_size: 64
     num_layers: 2
     dropout: 0.2
-    epochs: 50
-    batch_size: 32
+    epochs: 100
+    batch_size: 128
     learning_rate: 0.001
   
   # Transformer
@@ -97,8 +97,8 @@ models:
     num_decoder_layers: 2
     dim_feedforward: 256
     dropout: 0.1
-    epochs: 50
-    batch_size: 32
+    epochs: 100
+    batch_size: 128
     learning_rate: 0.001
 
 # 预测配置

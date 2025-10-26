@@ -293,7 +293,7 @@ def generate_word_report(
                 for j, value in enumerate(row):
                     cells[j].text = str(value)
                     
-                    # Highlight best values in red/bold
+                    # Highlight best values in bold
                     if j > 0 and str(value) != 'N/A':  # Skip model column
                         col_name = pivot_data.columns[j]
                         try:
@@ -301,7 +301,6 @@ def generate_word_report(
                                 if float(value) == best_values[col_name]:
                                     for paragraph in cells[j].paragraphs:
                                         for run in paragraph.runs:
-                                            run.font.color.rgb = RGBColor(255, 0, 0)  # Red
                                             run.font.bold = True
                         except:
                             pass

@@ -81,19 +81,19 @@ def wape(y_true: np.ndarray, y_pred: np.ndarray, eps: float = 1e-8) -> float:
     return 100.0 * numerator / denominator
 
 
-def acc(y_true: np.ndarray, y_pred: np.ndarray, threshold: float = 0.1) -> float:
+def acc(y_true: np.ndarray, y_pred: np.ndarray, threshold: float = 0.05) -> float:
     """
     近似准确率 (Approximate Accuracy)
     
     Definition: 100% * count(|y_true - y_pred| / |y_true| <= threshold) / len(y_true)
     
     计算预测值与真实值相对误差在阈值内的样本占比
-    默认阈值为10%，即预测误差在±10%以内视为准确
+    默认阈值为5%，即预测误差在±5%以内视为准确
     
     Args:
         y_true: True values
         y_pred: Predicted values
-        threshold: Relative error threshold (default 0.1 for 10%)
+        threshold: Relative error threshold (default 0.05 for 5%)
     
     Returns:
         ACC value as percentage (0-100)

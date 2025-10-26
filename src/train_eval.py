@@ -181,16 +181,20 @@ def train_evaluate_baseline_models(
             logging.info(f"    训练 Naive 基线模型...")
             naive_model = NaiveForecaster()
             naive_model.fit(None, Y_train)
-            Y_pred_naive = naive_model.predict(range(len(test_idx)))
+            # For baseline models, we predict one step at a time for each test sample
+            # The horizon is already accounted for in Y_h (shifted by horizon)
+            Y_pred_naive = naive_model.predict([0])  # Predict 1 step (using last training value)
+            # Repeat the prediction for all test samples
+            Y_pred_naive = np.repeat([Y_pred_naive], len(test_idx), axis=0)
             
             for target_idx, target in enumerate(target_cols):
                 y_true = Y_test[target].values
-                y_pred = Y_pred_naive[:, target_idx] if len(target_cols) > 1 else Y_pred_naive
+                y_pred = Y_pred_naive[:, target_idx] if len(target_cols) > 1 else Y_pred_naive.flatten()
                 
                 metrics = eval_metrics(y_true, y_pred,
                                       metric_names=config.get('evaluation', 'metrics'))
                 
-                logging.info(f"      Naive ({target}): RMSE={metrics['RMSE']:.4f}, MAE={metrics['MAE']:.4f}")
+                logging.info(f"      Naive ({target}): RMSE={metrics['RMSE']:.4f}, MAE={metrics['MAE']:.4f}, ACC={metrics.get('ACC', 0):.2f}%")
                 
                 results.append({
                     'model': 'Naive',
@@ -205,16 +209,23 @@ def train_evaluate_baseline_models(
             logging.info(f"    训练 SeasonalNaive 基线模型 (周期长度: {season_length})...")
             seasonal_model = SeasonalNaiveForecaster(season_length=season_length)
             seasonal_model.fit(None, Y_train)
-            Y_pred_seasonal = seasonal_model.predict(range(len(test_idx)))
+            # For seasonal naive, use seasonal pattern from training data
+            # Predict one value for each test sample
+            Y_pred_seasonal = []
+            for i in range(len(test_idx)):
+                # Get the seasonal value from training data
+                seasonal_idx = (len(Y_train) - season_length + horizon - 1 + i) % len(Y_train)
+                Y_pred_seasonal.append(Y_train.iloc[seasonal_idx].values)
+            Y_pred_seasonal = np.array(Y_pred_seasonal)
             
             for target_idx, target in enumerate(target_cols):
                 y_true = Y_test[target].values
-                y_pred = Y_pred_seasonal[:, target_idx] if len(target_cols) > 1 else Y_pred_seasonal
+                y_pred = Y_pred_seasonal[:, target_idx] if len(target_cols) > 1 else Y_pred_seasonal.flatten()
                 
                 metrics = eval_metrics(y_true, y_pred,
                                       metric_names=config.get('evaluation', 'metrics'))
                 
-                logging.info(f"      SeasonalNaive ({target}): RMSE={metrics['RMSE']:.4f}, MAE={metrics['MAE']:.4f}")
+                logging.info(f"      SeasonalNaive ({target}): RMSE={metrics['RMSE']:.4f}, MAE={metrics['MAE']:.4f}, ACC={metrics.get('ACC', 0):.2f}%")
                 
                 results.append({
                     'model': 'SeasonalNaive',

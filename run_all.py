@@ -13,7 +13,7 @@ from src.config import load_config
 from src.data_io import load_data, generate_diagnostic_plots
 from src.train_eval import run_evaluation
 from src.plots import plot_error_by_horizon, plot_all_metrics_by_horizon, configure_chinese_fonts
-from src.report_md import generate_markdown_report
+
 from src.report_docx import generate_word_report
 from src.model_manager import save_model, get_best_model_info, make_future_forecast
 import pandas as pd
@@ -243,13 +243,13 @@ def main():
     
     report_dir = output_dir / 'report'
     
-    # Markdown report
-    md_report_path = generate_markdown_report(
-        results_df,
-        config_path=args.config,
-        figures_dir=str(figures_dir),
-        output_path=str(report_dir / '项目评估报告.md')
-    )
+    # Markdown report - commented out as we only need Word report
+    # md_report_path = generate_markdown_report(
+    #     results_df,
+    #     config_path=args.config,
+    #     figures_dir=str(figures_dir),
+    #     output_path=str(report_dir / '项目评估报告.md')
+    # )
     
     # Word report (with forecast results)
     word_report_path = generate_word_report(
@@ -259,7 +259,7 @@ def main():
         output_path=str(report_dir / '项目评估报告.docx'),
         forecast_df=forecast_df
     )
-    logging.info("")
+    logging.info(f"Word报告已生成: {word_report_path}")
     
     # Copy to latest outputs folder for convenience
     latest_dir = output_base / 'latest'
@@ -279,7 +279,7 @@ def main():
     logging.info(f"  - 图表目录: {figures_dir}")
     if forecast_df is not None and len(forecast_df) > 0:
         logging.info(f"  - 预测结果: {output_dir / 'forecast_results.csv'} ({len(forecast_df)} 个时间点)")
-    logging.info(f"  - Markdown报告: {md_report_path}")
+    # logging.info(f"  - Markdown报告: {md_report_path}")  # Not generating MD report
     logging.info(f"  - Word报告: {word_report_path}")
     logging.info("="*60)
 
