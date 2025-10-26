@@ -1,97 +1,152 @@
+# 电力有功预测项目配置文件 - 仅预测有功功率
+# Power Forecasting Configuration - Active Power Only
+
+# 设备配置
+device:
+  type: "cpu"  # 可选: "auto", "cpu", "mps", "cuda"
+  # auto: 自动检测 (优先级: cuda > mps > cpu)
+  # cpu: 强制使用CPU (小模型推荐，稳定快速)
+  # mps: 强制使用Apple Metal (需要大batch size才有优势)
+  # cuda: 强制使用NVIDIA GPU
+
+# 数据配置
 data:
-  data_path: data/raw
-  file_pattern: '*.csv'
-  freq: H
-  imputation:
-    method: nearest_p
-    target_p_value: 280.0
-  interp_limit: 3
-  p_col: 有功
-  q_col: 无功
-  time_col: 时间
+  data_path: "data/raw"
+  file_pattern: "*.csv"
+  time_col: "时间"
+  p_col: "有功"
+  q_col: "无功"  # 仍然加载，但仅用于缺失值填补
+  freq: "H"
   tz: null
-evaluation:
-  horizons:
-  - 1
-  metrics:
-  - RMSE
-  - MAE
-  - SMAPE
-  - WAPE
-  - ACC
-  n_splits: 2
-  test_window: 50
+  interp_limit: 3
+  # 缺失值填补配置
+  imputation:
+    # 多策略循环模式: 依次运行每个策略,每个策略生成独立的报告
+    # 如果配置了strategies列表,将忽略method字段
+    strategies:
+      - nearest_p
+      - seasonal
+      - day_copy
+      - interpolate
+      - mean
+      - median
+      - forward
+      - backward
+
+    # 单一方法模式 (如果strategies未配置或为空,则使用此方法)
+    # method: "nearest_p"  # 可选: nearest_p, forward, backward, interpolate, mean, median, day_copy, seasonal
+    
+    # 各方法的参数
+    target_p_value: 400     # nearest_p方法的目标有功功率值
+    day_copy_days_back: 7   # day_copy方法: 回溯天数
+    seasonal_period: 24     # seasonal方法: 季节周期(小时数据用24表示日周期)
+
+# 预测目标配置
+target:
+  predict_p: true   # 预测有功功率
+  predict_q: false  # 不预测无功功率
+
+# 特征工程配置
 features:
-  exog_cols:
-  - 定子电流
-  - 定子电压
-  - 转子电压
-  - 转子电流
-  - 励磁电流
   max_lag: 24
   roll_windows:
-  - 6
-  - 12
-  - 24
-  season_length: 24
-  sequence_length: 24
+    - 6
+    - 12
+    - 24
   use_time_features: true
-forecast:
-  best_model: Transformer
-  enabled: true
-  end_date: '2025-10-20'
-  start_date: '2025-10-20'
+  sequence_length: 24
+  season_length: 24
+  exog_cols:  # 使用电气特征作为外生变量
+    - '定子电流'
+    - '定子电压'
+    - '转子电压'
+    - '转子电流'
+    - '励磁电流'
+
+# 评估配置
+evaluation:
+  horizons: "1,2,3,4,5,6,7,8,9,10,11,12"  # 预测步长 (支持逗号分隔字符串或列表)
+  test_window: 100
+  n_splits: 1  # 交叉验证折数 (1=单次划分, 3=3折交叉验证)
+  metrics:
+    - RMSE
+    - MAE
+    - SMAPE
+    - WAPE
+    - ACC_5   # 5%阈值准确率
+    - ACC_10  # 10%阈值准确率
+
+# 模型配置
 models:
-  lstm:
-    batch_size: 32
-    dropout: 0.2
-    enabled: true
-    epochs: 1
-    hidden_size: 32
-    learning_rate: 0.001
-    num_layers: 1
+  # 朴素基线
   naive:
     enabled: true
-  rf:
-    enabled: true
-    max_depth: null
-    n_estimators: 50
-    n_jobs: -1
+  
+  # 季节朴素基线
   seasonal_naive:
     enabled: true
-  transformer:
-    batch_size: 32
-    d_model: 32
-    dim_feedforward: 128
-    dropout: 0.1
+  
+  # 随机森林
+  rf:
     enabled: true
-    epochs: 1
-    learning_rate: 0.001
-    nhead: 2
-    num_decoder_layers: 1
-    num_encoder_layers: 1
+    n_estimators: 100
+    max_depth: null
+    n_jobs: -1
+  
+  # XGBoost
   xgb:
     enabled: true
-    learning_rate: 0.1
+    n_estimators: 100
     max_depth: 6
-    n_estimators: 50
+    learning_rate: 0.1
     n_jobs: -1
+  
+  # LSTM
+  lstm:
+    enabled: true
+    hidden_size: 64
+    num_layers: 2
+    dropout: 0.3
+    epochs: 1
+    batch_size: 64
+    learning_rate: 0.001
+  
+  # Transformer
+  transformer:
+    enabled: true
+    d_model: 64
+    nhead: 4
+    num_encoder_layers: 2
+    num_decoder_layers: 2
+    dim_feedforward: 256
+    dropout: 0.2
+    epochs: 1
+    batch_size: 32
+    learning_rate: 0.0005
+
+# 预测配置
+forecast:
+  enabled: true
+  start_date: "2025-10-20"
+  end_date: "2025-10-22"
+  best_model: "Transformer"  # 使用效果最好的模型
+
+# 图形配置
 plotting:
-  fig_dpi: 100
+  fig_dpi: 150
   font_priority:
-  - SimHei
-  - Microsoft YaHei
-  - STHeiti
-  - PingFang SC
-  - Heiti SC
-  - WenQuanYi Micro Hei
-  - Noto Sans CJK SC
-  - DejaVu Sans
-  - Arial Unicode MS
+    - SimHei
+    - Microsoft YaHei
+    - STHeiti
+    - PingFang SC
+    - Heiti SC
+    - WenQuanYi Micro Hei
+    - Noto Sans CJK SC
+    - DejaVu Sans
+    - Arial Unicode MS
+
+# 报告配置
 report:
-  generate_markdown: true
-  generate_word: true
-  include_forecast_table: true
-target:
-  predict_p: true
-  predict_q: false
+  generate_word: true      # 生成Word报告
+  generate_markdown: true  # 生成Markdown报告
+  include_forecast_table: true  # 包含预测结果表格

@@ -117,6 +117,190 @@ def impute_missing_by_nearest_p(df: pd.DataFrame, target_p: float = 280.0) -> pd
     return df
 
 
+def impute_forward_fill(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    前向填充: 使用最后一个有效值填充缺失值
+    适用于缓慢变化的时间序列
+    """
+    df_imputed = df.ffill()  # Updated method name
+    imputed_count = df.isna().sum().sum() - df_imputed.isna().sum().sum()
+    print(f"✓ Forward fill imputed {imputed_count} missing values")
+    return df_imputed
+
+
+def impute_backward_fill(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    后向填充: 使用下一个有效值填充缺失值
+    """
+    df_imputed = df.bfill()  # Updated method name
+    imputed_count = df.isna().sum().sum() - df_imputed.isna().sum().sum()
+    print(f"✓ Backward fill imputed {imputed_count} missing values")
+    return df_imputed
+
+
+def impute_interpolate(df: pd.DataFrame, method='linear') -> pd.DataFrame:
+    """
+    插值填充: 使用线性/样条插值填充缺失值
+    适用于连续变化的时间序列
+    
+    Args:
+        df: DataFrame
+        method: 'linear', 'polynomial', 'spline', 'time' etc.
+    """
+    df_imputed = df.interpolate(method=method)
+    imputed_count = df.isna().sum().sum() - df_imputed.isna().sum().sum()
+    print(f"✓ {method.capitalize()} interpolation imputed {imputed_count} missing values")
+    return df_imputed
+
+
+def impute_mean(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    均值填充: 使用列均值填充缺失值
+    """
+    df_imputed = df.fillna(df.mean())
+    imputed_count = df.isna().sum().sum() - df_imputed.isna().sum().sum()
+    print(f"✓ Mean imputation filled {imputed_count} missing values")
+    return df_imputed
+
+
+def impute_median(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    中位数填充: 使用列中位数填充缺失值
+    对异常值更鲁棒
+    """
+    df_imputed = df.fillna(df.median())
+    imputed_count = df.isna().sum().sum() - df_imputed.isna().sum().sum()
+    print(f"✓ Median imputation filled {imputed_count} missing values")
+    return df_imputed
+
+
+def impute_day_copy(df: pd.DataFrame, days_back: int = 7) -> pd.DataFrame:
+    """
+    日期复制填充: 从前N天的相同时刻复制数据
+    适用于有明显日周期性的数据 (如电力负荷)
+    
+    Args:
+        df: DataFrame with DatetimeIndex
+        days_back: 向前回溯多少天 (default=7, 即复制上周同一天的数据)
+    """
+    if not isinstance(df.index, pd.DatetimeIndex):
+        print("⚠️  Day-copy imputation requires DatetimeIndex")
+        return df
+    
+    df_imputed = df.copy()
+    original_nan_count = df.isna().sum().sum()
+    
+    # 找到所有缺失值的位置
+    for col in df.columns:
+        missing_mask = df[col].isna()
+        missing_indices = df.index[missing_mask]
+        
+        for missing_idx in missing_indices:
+            # 计算days_back天前的时间
+            donor_idx = missing_idx - pd.Timedelta(days=days_back)
+            
+            # 如果donor时间存在且有值,则复制
+            if donor_idx in df.index and pd.notna(df.loc[donor_idx, col]):
+                df_imputed.loc[missing_idx, col] = df.loc[donor_idx, col]
+    
+    imputed_count = original_nan_count - df_imputed.isna().sum().sum()
+    print(f"✓ Day-copy ({days_back} days back) imputed {imputed_count} missing values")
+    
+    return df_imputed
+
+
+def impute_seasonal_decomposition(df: pd.DataFrame, period: int = 24) -> pd.DataFrame:
+    """
+    季节性分解填充: 基于季节模式填充缺失值
+    需要statsmodels库
+    
+    Args:
+        df: DataFrame
+        period: 季节周期 (对于小时数据, 24表示日周期)
+    """
+    try:
+        from statsmodels.tsa.seasonal import seasonal_decompose
+    except ImportError:
+        print("⚠️  statsmodels not installed, using forward fill instead")
+        return impute_forward_fill(df)
+    
+    df_imputed = df.copy()
+    original_nan_count = df.isna().sum().sum()
+    
+    for col in df.columns:
+        if df[col].isna().any():
+            # 先用插值填充以进行分解
+            temp_filled = df[col].interpolate(method='linear', limit_direction='both')
+            
+            if len(temp_filled) >= 2 * period:
+                try:
+                    # 季节性分解
+                    decomposition = seasonal_decompose(temp_filled, model='additive', period=period)
+                    seasonal_component = decomposition.seasonal
+                    
+                    # 用季节成分填充缺失值
+                    missing_mask = df[col].isna()
+                    df_imputed.loc[missing_mask, col] = seasonal_component[missing_mask]
+                except Exception as e:
+                    print(f"⚠️  Seasonal decomposition failed for {col}: {e}, using interpolation")
+                    df_imputed[col] = temp_filled
+            else:
+                df_imputed[col] = temp_filled
+    
+    imputed_count = original_nan_count - df_imputed.isna().sum().sum()
+    print(f"✓ Seasonal decomposition (period={period}) imputed {imputed_count} missing values")
+    
+    return df_imputed
+
+
+def impute_data(df: pd.DataFrame, method: str = 'forward', **kwargs) -> pd.DataFrame:
+    """
+    统一的数据填充接口
+    
+    Args:
+        df: DataFrame with potential missing values
+        method: Imputation method
+            - 'forward': Forward fill
+            - 'backward': Backward fill  
+            - 'interpolate': Linear interpolation
+            - 'mean': Mean imputation
+            - 'median': Median imputation
+            - 'day_copy': Copy from same time N days ago
+            - 'seasonal': Seasonal decomposition
+            - 'nearest_p': Use rows with P close to target value
+        **kwargs: Additional arguments for specific methods
+            - target_p: for 'nearest_p' method
+            - days_back: for 'day_copy' method (default=7)
+            - period: for 'seasonal' method (default=24)
+    
+    Returns:
+        DataFrame with imputed values
+    """
+    if method == 'forward':
+        return impute_forward_fill(df)
+    elif method == 'backward':
+        return impute_backward_fill(df)
+    elif method == 'interpolate':
+        return impute_interpolate(df, method='linear')
+    elif method == 'mean':
+        return impute_mean(df)
+    elif method == 'median':
+        return impute_median(df)
+    elif method == 'day_copy':
+        days_back = kwargs.get('days_back', 7)
+        return impute_day_copy(df, days_back=days_back)
+    elif method == 'seasonal':
+        period = kwargs.get('period', 24)
+        return impute_seasonal_decomposition(df, period=period)
+    elif method == 'nearest_p':
+        target_p = kwargs.get('target_p', 280.0)
+        return impute_missing_by_nearest_p(df, target_p=target_p)
+    else:
+        raise ValueError(f"Unknown imputation method: {method}. "
+                        f"Choose from: forward, backward, interpolate, mean, median, "
+                        f"day_copy, seasonal, nearest_p")
+
+
 def load_data(
     file_path: str,
     time_col: str = None,
@@ -127,7 +311,9 @@ def load_data(
     tz: str = None,
     interp_limit: int = 3,
     imputation_method: str = None,
-    target_p_value: float = 280.0
+    target_p_value: float = 280.0,
+    day_copy_days_back: int = 7,
+    seasonal_period: int = 24
 ) -> tuple:
     """
     Load and preprocess power data from CSV file
@@ -141,8 +327,11 @@ def load_data(
         freq: Frequency of time series ('h' for hourly)
         tz: Timezone (None for naive datetime)
         interp_limit: Maximum consecutive NaN values to interpolate
-        imputation_method: Method for imputing missing values ('nearest_p' or None)
+        imputation_method: Method for imputing missing values 
+            ('nearest_p', 'forward', 'backward', 'interpolate', 'mean', 'median', 'day_copy', 'seasonal')
         target_p_value: Target P value for nearest_p imputation
+        day_copy_days_back: Days to look back for day_copy method (default=7)
+        seasonal_period: Period for seasonal decomposition (default=24 for hourly data)
         
     Returns:
         Tuple of (processed_df, original_df_before_imputation)
@@ -247,10 +436,20 @@ def load_data(
     df_before_imputation = df.copy()
     
     # Apply imputation if specified
-    if imputation_method == 'nearest_p':
-        print(f"\n🔧 Applying nearest_p imputation (target P={target_p_value})...")
-        df = impute_missing_by_nearest_p(df, target_p=target_p_value)
+    if imputation_method:
+        print(f"\n🔧 Applying {imputation_method} imputation...")
+        df = impute_data(
+            df, 
+            method=imputation_method,
+            target_p=target_p_value,
+            days_back=day_copy_days_back,
+            period=seasonal_period
+        )
         print(f"After imputation - P: {df['P'].isna().sum()}, Q: {df['Q'].isna().sum()}")
+        if exog_cols:
+            for col in df.columns:
+                if col not in ['P', 'Q']:
+                    print(f"After imputation - {col}: {df[col].isna().sum()}")
     
     return df, df_before_imputation
 

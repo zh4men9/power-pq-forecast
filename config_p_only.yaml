@@ -21,8 +21,25 @@ data:
   interp_limit: 3
   # 缺失值填补配置
   imputation:
-    method: "nearest_p"  # 使用有功接近280的数据填充
-    target_p_value: 280  # 目标有功功率值
+    # 多策略循环模式: 依次运行每个策略,每个策略生成独立的报告
+    # 如果配置了strategies列表,将忽略method字段
+    strategies:
+      - nearest_p
+      - forward
+      - backward
+      - interpolate
+      - mean
+      - median
+      - day_copy
+      - seasonal
+    
+    # 单一方法模式 (如果strategies未配置或为空,则使用此方法)
+    # method: "nearest_p"  # 可选: nearest_p, forward, backward, interpolate, mean, median, day_copy, seasonal
+    
+    # 各方法的参数
+    target_p_value: 400     # nearest_p方法的目标有功功率值
+    day_copy_days_back: 7   # day_copy方法: 回溯天数
+    seasonal_period: 24     # seasonal方法: 季节周期(小时数据用24表示日周期)
 
 # 预测目标配置
 target:
@@ -48,10 +65,7 @@ features:
 
 # 评估配置
 evaluation:
-  horizons:
-    - 1
-    - 12
-    - 24
+  horizons: "1,2,3,4,5,6,7,8,9,10,11,12"  # 预测步长 (支持逗号分隔字符串或列表)
   test_window: 100
   n_splits: 1  # 交叉验证折数 (1=单次划分, 3=3折交叉验证)
   metrics:
@@ -106,7 +120,7 @@ models:
     num_decoder_layers: 2
     dim_feedforward: 256
     dropout: 0.2
-    epochs: 200
+    epochs: 300
     batch_size: 32
     learning_rate: 0.0005
 

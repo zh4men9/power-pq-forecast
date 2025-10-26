@@ -54,9 +54,393 @@
 
 ## 🎉 最新改进
 
-### 2025年10月更新
+### 2025年10月26日 - 重大更新 V2.0
 
-我们对系统进行了全面升级，大幅提升用户体验和性能：
+#### 🚀 1. 深度学习训练效率优化
+
+**问题诊断**：原版本对每个预测步长(horizon)重复训练深度学习模型
+- Horizon 1: 训练LSTM(32s) + Transformer(186s)
+- Horizon 12: 再次训练LSTM(31s) + Transformer(185s)  
+- Horizon 24: 再次训练LSTM + Transformer
+- **总耗时**: ~12分钟深度学习训练(重复3次)
+
+**解决方案**：创建`train_evaluate_deep_models_once`函数
+- 所有horizons共享同一个训练好的模型
+- 只在数据准备阶段针对不同horizon准备序列
+- **优化效果**: 训练时间减少67% (从12分钟→4分钟)
+
+**技术细节**：
+```python
+# 旧方案：每个horizon独立训练
+for horizon in [1, 12, 24]:
+    X, Y = prepare_sequences(df, horizon=horizon)  
+    model.fit(X, Y)  # 重复训练3次！
+
+# 新方案：一次性训练所有horizons
+deep_results, models = train_evaluate_deep_models_once(
+    df, horizons=[1,12,24], cv_splitter, config
+)
+```
+
+---
+
+#### 📊 2. 灵活的Horizons配置
+
+**新增功能**：支持逗号分隔字符串配置预测步长
+
+**配置语法**：
+```yaml
+evaluation:
+  # 方式1: 逗号分隔字符串 (推荐，更简洁)
+  horizons: "1,2,3,4,5,6,7,8,9,10,11,12"
+  
+  # 方式2: YAML列表 (传统方式)
+  horizons: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+  
+  # 方式3: 非连续步长
+  horizons: "1,6,12,24,48"
+```
+
+**自动解析**：`config.py`自动将字符串转换为列表
+```python
+# 用户配置
+horizons: "1,2,3,4,5,6,7,8,9,10,11,12"
+
+# 自动解析为
+horizons: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]  # ✅
+```
+
+**优势**：
+- ✅ 配置更简洁(一行vs多行)
+- ✅ 便于快速修改(直接编辑数字序列)
+- ✅ 向后兼容(仍支持列表格式)
+
+---
+
+#### 🔧 3. 多种数据填充策略
+
+**新增8种填充方法**：
+
+| 策略 | 说明 | 适用场景 | 参数 |
+|------|------|----------|------|
+| **nearest_p** | 基于P值接近性填充 | 原有方法，有目标P值参考 | `target_p_value` |
+| **forward** | 前向填充(ffill) | 数据缓慢变化，连续性好 | - |
+| **backward** | 后向填充(bfill) | 需要向前传播已知值 | - |
+| **interpolate** | 线性插值 | 连续平滑数据，缺失较少 | - |
+| **mean** | 均值填充 | 数据稳定，无明显趋势 | - |
+| **median** | 中位数填充 | 存在异常值，需要鲁棒性 | - |
+| **day_copy** | 日期复制 | 强日周期性(电力负荷) | `days_back=7` |
+| **seasonal** | 季节分解 | 复杂季节模式 | `period=24` |
+
+**配置示例**：
+```yaml
+data:
+  imputation:
+    # 多策略模式：循环运行，每个策略生成独立报告
+    strategies:
+      - nearest_p
+      - forward
+      - interpolate
+      - day_copy
+    
+    # 单一策略模式（如果strategies为空）
+    method: "nearest_p"
+    
+    # 参数配置
+    target_p_value: 400       # nearest_p: 目标有功功率值
+    day_copy_days_back: 7     # day_copy: 回溯天数(默认7天)
+    seasonal_period: 24       # seasonal: 季节周期(小时数据)
+```
+
+**统一接口**：
+```python
+# 调用示例
+df_filled = impute_data(
+    df, 
+    method='day_copy',      # 填充方法
+    days_back=7             # 方法参数
+)
+```
+
+---
+
+#### 🔄 4. 多策略批量对比模式
+
+**核心功能**：一次运行自动对比所有填充策略的效果
+
+**工作流程**：
+```
+1. 读取config中的strategies列表
+2. 对每个策略:
+   ├─ 独立加载和填充数据
+   ├─ 训练所有模型(Naive/RF/XGB/LSTM/Transformer)
+   ├─ 生成独立的metrics/figures/models目录
+   └─ 生成独立的Word报告: 项目评估报告_<策略>.docx
+3. 所有结果保存在同一个output目录
+```
+
+**目录结构**：
+```
+outputs/output-2025-10-26-2045/
+├── config_used.yaml              # ✅ 备份的配置文件
+├── logs/training.log              # ✅ 完整日志
+├── report/                        # ✅ 报告目录
+│   ├── 项目评估报告_nearest_p.docx
+│   ├── 项目评估报告_forward.docx
+│   ├── 项目评估报告_backward.docx
+│   ├── 项目评估报告_interpolate.docx
+│   ├── 项目评估报告_mean.docx
+│   ├── 项目评估报告_median.docx
+│   ├── 项目评估报告_day_copy.docx
+│   └── 项目评估报告_seasonal.docx
+├── figures_nearest_p/            # 各策略独立图表
+├── figures_forward/
+├── metrics_nearest_p/            # 各策略独立指标
+├── models_nearest_p/             # 各策略独立模型
+└── ...
+```
+
+**运行命令**：
+```bash
+# 运行所有策略(默认8个)
+python run_all.py
+
+# 查看报告
+ls outputs/latest/report/*.docx
+```
+
+**日志输出示例**：
+```
+🔄 多策略模式: 将依次运行 8 个填充策略
+策略列表: nearest_p, forward, backward, interpolate, mean, median, day_copy, seasonal
+
+████████████████████████████████████████████████████████████
+运行策略 [1/8]: nearest_p
+████████████████████████████████████████████████████████████
+
+🔧 Applying nearest_p imputation...
+✓ Forward fill imputed 1234 missing values
+✓ Word报告已生成: report/项目评估报告_nearest_p.docx
+
+████████████████████████████████████████████████████████████
+运行策略 [2/8]: forward
+████████████████████████████████████████████████████████████
+...
+```
+
+**单策略模式**：
+```yaml
+# 如果不想批量对比，注释掉strategies
+data:
+  imputation:
+    # strategies: [...]  # 注释掉
+    method: "interpolate"  # 只用一种方法
+```
+
+---
+
+#### 📝 5. 配置文件版本管理
+
+**新增功能**：每次运行自动备份配置到output目录
+
+**实现机制**：
+```python
+# run_all.py 自动执行
+config_backup_path = output_dir / 'config_used.yaml'
+shutil.copy2(args.config, config_backup_path)
+
+# 报告生成时读取备份的配置
+word_report_path = generate_word_report(
+    results_df,
+    config_path=str(config_backup_path),  # ✅ 读取备份
+    ...
+)
+```
+
+**优势**：
+- ✅ **可追溯**：每个实验的配置永久保存
+- ✅ **参数一致**：报告参数与实际训练100%一致
+- ✅ **便于复现**：可以基于历史配置重新运行
+- ✅ **版本对比**：对比不同配置的效果
+
+**使用示例**：
+```bash
+# 查看某次运行的配置
+cat outputs/output-2025-10-26-1430/config_used.yaml
+
+# 基于历史配置重新运行
+python run_all.py --config outputs/output-2025-10-26-1430/config_used.yaml
+
+# 对比两次配置
+diff outputs/output-2025-10-26-1430/config_used.yaml \
+     outputs/output-2025-10-26-1645/config_used.yaml
+```
+
+---
+
+### 2025年10月更新（之前版本）
+
+#### 🎯 1. 双准确率指标系统 (ACC_5 & ACC_10)
+
+**新增功能**：将原有的单一ACC指标拆分为两个独立指标，提供更细粒度的准确率评估
+
+| 指标 | 阈值 | 含义 | 适用场景 |
+|------|------|------|----------|
+| **ACC_5** | 5% | 严格准确率 | 高精度要求场景 |
+| **ACC_10** | 10% | 宽松准确率 | 实用性评估 |
+
+**示例解读**：
+- ACC_5 = 75%：表示75%的预测误差在5%以内（高精度）
+- ACC_10 = 92%：表示92%的预测误差在10%以内（实用可接受）
+
+**实现细节**：
+```python
+# src/metrics.py 新增函数
+def acc_5(y_true, y_pred):
+    """5%阈值准确率"""
+    return acc(y_true, y_pred, threshold=0.05)
+
+def acc_10(y_true, y_pred):
+    """10%阈值准确率"""
+    return acc(y_true, y_pred, threshold=0.10)
+```
+
+**配置更新**：
+```yaml
+evaluation:
+  metrics:
+    - RMSE
+    - MAE
+    - SMAPE
+    - WAPE
+    - ACC_5   # 新增：5%阈值
+    - ACC_10  # 新增：10%阈值
+```
+
+**报告更新**：
+- ✅ 所有评估表格包含ACC_5和ACC_10
+- ✅ 图表说明更新为6个指标
+- ✅ 最优模型判断同时考虑两个ACC指标
+
+---
+
+#### ⚡ 2. 可配置交叉验证折数 (n_splits)
+
+**新增功能**：用户可自由选择单次划分或多折交叉验证
+
+**配置选项**：
+```yaml
+evaluation:
+  n_splits: 1  # 可选：1, 2, 3, 5...
+```
+
+**性能对比**：
+
+| n_splits | 训练时间 | 结果稳定性 | 适用场景 |
+|----------|----------|------------|----------|
+| **1** | 1x (基准) | ⭐⭐⭐ | 快速开发、模型选型 |
+| **3** | 3x | ⭐⭐⭐⭐⭐ | 正式报告、论文发表 |
+| **5** | 5x | ⭐⭐⭐⭐⭐ | 小样本数据集 |
+
+**使用建议**：
+- 📊 **日常开发**：`n_splits: 1`（默认配置）
+  - 训练速度快3倍
+  - 3384样本数据量充足，单次划分已够稳定
+  - 适合快速迭代和参数调优
+  
+- 📑 **正式报告**：`n_splits: 3`
+  - 更可靠的性能评估
+  - 减少随机性影响
+  - 符合学术标准
+
+**实现细节**：
+- 使用滚动起点交叉验证（Rolling Origin CV）
+- n_splits=1时退化为单次时间序列划分
+- 保持时间顺序，严格防止数据泄漏
+
+---
+
+#### 🖥️ 3. 可配置硬件加速设备
+
+**新增功能**：通过配置文件控制深度学习模型的计算设备
+
+**配置语法**：
+```yaml
+device:
+  type: "cpu"  # 可选: "auto", "cpu", "mps", "cuda"
+```
+
+**设备选项说明**：
+
+| 选项 | 行为 | 适用场景 |
+|------|------|----------|
+| **auto** | 自动检测（cuda > mps > cpu） | 默认推荐 |
+| **cpu** | 强制使用CPU | 小模型、快速稳定 |
+| **mps** | 强制使用Apple Metal | M芯片Mac + 大batch |
+| **cuda** | 强制使用NVIDIA GPU | NVIDIA显卡 |
+
+**性能基准测试结果**（基于实际数据3000样本）：
+
+**LSTM模型**：
+```
+batch=32: CPU 0.53s vs MPS 0.59s → CPU快11%
+batch=64: CPU 0.40s vs MPS 0.64s → CPU快62%
+```
+
+**Transformer模型**：
+```
+batch=32: CPU 1.17s vs MPS 1.64s → CPU快40%
+batch=64: CPU 1.03s vs MPS 0.90s → MPS快15%
+```
+
+**结论与建议**：
+- ✅ **推荐配置**：`device: cpu`（默认）
+- 原因：数据量3000+，模型小，CPU已经很快
+- 只有Transformer + batch≥64时MPS才略快
+- CPU更稳定，避免MPS兼容性问题
+
+**代码实现**：
+```python
+# 从配置读取设备类型
+device_type = config.get('device', 'type', default='cpu')
+
+# 传递给模型
+model = LSTMForecaster(..., device=device_type)
+model = TransformerForecaster(..., device=device_type)
+```
+
+---
+
+#### 📊 4. 报告从配置文件读取参数
+
+**新增功能**：Word报告动态显示实际使用的模型参数
+
+**更新内容**：
+- ✅ 所有模型参数从配置文件读取（不再硬编码）
+- ✅ 自动显示实际epoch、batch_size、dropout等
+- ✅ 硬件加速设备类型实时显示
+
+**示例报告输出**：
+```
+2.5 LSTM（长短期记忆网络）
+参数配置：
+• hidden_size: 64（隐藏层维度）
+• num_layers: 2（LSTM堆叠层数）
+• dropout: 0.3（防止过拟合的丢弃率）
+• epochs: 100（训练轮数）
+• batch_size: 64（批次大小）
+• learning_rate: 0.001（Adam优化器学习率）
+• 硬件加速: CPU
+```
+
+**优势**：
+- 报告参数与实际训练配置100%一致
+- 修改config后报告自动更新
+- 便于实验记录和复现
+
+---
+
+### 2025年10月更新（之前版本）
 
 #### ✨ 1. 硬件加速与进度可视化
 

@@ -29,10 +29,25 @@ class Config:
     
     def _validate(self):
         """Validate configuration consistency"""
+        # Parse and validate horizons
+        horizons_raw = self.config.get('evaluation', {}).get('horizons', [])
+        
+        # Support both string (comma-separated) and list formats
+        if isinstance(horizons_raw, str):
+            # Parse comma-separated string: "1,2,3,4,5,6,7,8,9,10,11,12"
+            try:
+                horizons = [int(h.strip()) for h in horizons_raw.split(',')]
+                self.config['evaluation']['horizons'] = horizons
+            except ValueError:
+                raise ValueError("horizons string must contain comma-separated integers")
+        elif isinstance(horizons_raw, list):
+            horizons = horizons_raw
+        else:
+            raise ValueError("horizons must be a string (comma-separated) or list of integers")
+        
         # Validate horizons are positive integers
-        horizons = self.config.get('evaluation', {}).get('horizons', [])
         if not horizons or not all(isinstance(h, int) and h > 0 for h in horizons):
-            raise ValueError("horizons must be a list of positive integers")
+            raise ValueError("horizons must contain positive integers")
         
         # Validate test_window and n_splits
         test_window = self.config.get('evaluation', {}).get('test_window', 0)

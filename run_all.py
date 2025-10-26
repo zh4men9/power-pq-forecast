@@ -64,58 +64,30 @@ def setup_logging(output_dir: Path):
     return str(log_file)
 
 
-def main():
-    """Main execution function"""
-    # Parse arguments
-    parser = argparse.ArgumentParser(description='电力质量预测项目 - 一键运行脚本')
-    parser.add_argument('--config', type=str, default='config_p_only.yaml',
-                       help='配置文件路径 (默认: config_exog.yaml)')
-    args = parser.parse_args()
+def run_single_strategy(config, data_file, output_dir, config_backup_path, imputation_strategy=None):
+    """
+    运行单个填充策略的完整流程
     
-    # Create timestamped output directory
-    timestamp = datetime.now().strftime('%Y-%m-%d-%H%M')
-    output_base = Path('outputs')
-    output_dir = output_base / f'output-{timestamp}'
+    Args:
+        config: 配置对象
+        data_file: 数据文件路径
+        output_dir: 输出目录
+        config_backup_path: 备份的配置文件路径
+        imputation_strategy: 填充策略名称 (None表示使用配置中的method)
     
-    # Setup logging (before any other output)
-    log_file = setup_logging(output_dir)
-    
-    # Load configuration
+    Returns:
+        Tuple of (results_df, forecast_df, figures_dir)
+    """
+    # Load data with specified imputation strategy
     logging.info("="*60)
-    logging.info("步骤 1/6: 加载配置文件")
+    logging.info(f"步骤 2/7: 加载数据 (填充策略: {imputation_strategy or 'default'})")
     logging.info("="*60)
     
-    config = load_config(args.config)
-    logging.info(f"配置文件加载成功: {args.config}")
-    logging.info(f"输出目录: {output_dir}")
-    logging.info("")
-    
-    # Load data
-    logging.info("="*60)
-    logging.info("步骤 2/6: 加载数据")
-    logging.info("="*60)
-    
-    data_path = config.get('data', 'data_path', default='data/raw')
-    file_pattern = config.get('data', 'file_pattern', default='*.xlsx')
-    
-    # Find data file
-    data_dir = Path(data_path)
-    if not data_dir.exists():
-        logging.error(f"错误: 数据目录不存在: {data_path}")
-        logging.error("请将数据文件放置在 data/raw/ 目录中")
-        sys.exit(1)
-    
-    data_files = list(data_dir.glob(file_pattern))
-    if not data_files:
-        logging.error(f"错误: 未找到匹配的数据文件: {data_path}/{file_pattern}")
-        logging.error("请将数据文件放置在 data/raw/ 目录中")
-        sys.exit(1)
-    
-    data_file = data_files[0]
-    logging.info(f"使用数据文件: {data_file}")
-    
-    # Load data with config parameters
     imputation_config = config.get('data', 'imputation', default={})
+    
+    # Use specified strategy or fall back to config
+    method = imputation_strategy if imputation_strategy else imputation_config.get('method')
+    
     df, df_before = load_data(
         file_path=str(data_file),
         time_col=config.get('data', 'time_col'),
@@ -125,21 +97,24 @@ def main():
         freq=config.get('data', 'freq'),
         tz=config.get('data', 'tz'),
         interp_limit=config.get('data', 'interp_limit', default=3),
-        imputation_method=imputation_config.get('method'),
-        target_p_value=imputation_config.get('target_p_value', 280.0)
+        imputation_method=method,
+        target_p_value=imputation_config.get('target_p_value', 280.0),
+        day_copy_days_back=imputation_config.get('day_copy_days_back', 7),
+        seasonal_period=imputation_config.get('seasonal_period', 24)
     )
     
     # Generate diagnostic plots with before/after comparison
-    figures_dir = output_dir / 'figures'
+    strategy_suffix = f"_{imputation_strategy}" if imputation_strategy else ""
+    figures_dir = output_dir / f'figures{strategy_suffix}'
     generate_diagnostic_plots(df, df_before=df_before, output_dir=str(figures_dir))
-    print()
+    logging.info("")
     
     # Run evaluation
-    print("="*60)
-    print("步骤 3/7: 模型训练与评估")
-    print("="*60)
+    logging.info("="*60)
+    logging.info("步骤 3/7: 模型训练与评估")
+    logging.info("="*60)
     
-    metrics_dir = output_dir / 'metrics'
+    metrics_dir = output_dir / f'metrics{strategy_suffix}'
     results_df, trained_models = run_evaluation(config, df, metrics_dir=str(metrics_dir))
     logging.info("")
     
@@ -148,7 +123,7 @@ def main():
     logging.info("步骤 4/7: 保存训练好的模型")
     logging.info("="*60)
     
-    models_dir = output_dir / 'models'
+    models_dir = output_dir / f'models{strategy_suffix}'
     for model_name, model in trained_models.items():
         # Get model performance from results
         model_results = results_df[results_df['model'] == model_name]
@@ -200,7 +175,7 @@ def main():
             
             # Save forecast results
             if forecast_df is not None and len(forecast_df) > 0:
-                forecast_path = output_dir / 'forecast_results.csv'
+                forecast_path = output_dir / f'forecast_results{strategy_suffix}.csv'
                 forecast_df.to_csv(forecast_path, index=False, encoding='utf-8-sig')
                 logging.info(f"✓ 预测结果已保存: {forecast_path}")
         else:
@@ -236,30 +211,141 @@ def main():
     
     logging.info("")
     
-    # Generate Markdown report
+    return results_df, forecast_df, figures_dir
+
+
+def main():
+    """Main execution function"""
+    # Parse arguments
+    parser = argparse.ArgumentParser(description='电力质量预测项目 - 一键运行脚本')
+    parser.add_argument('--config', type=str, default='config_p_only.yaml',
+                       help='配置文件路径 (默认: config_exog.yaml)')
+    args = parser.parse_args()
+    
+    # Create timestamped output directory
+    timestamp = datetime.now().strftime('%Y-%m-%d-%H%M')
+    output_base = Path('outputs')
+    output_dir = output_base / f'output-{timestamp}'
+    
+    # Setup logging (before any other output)
+    log_file = setup_logging(output_dir)
+    
+    # Load configuration
     logging.info("="*60)
-    logging.info("步骤 7/7: 生成报告")
+    logging.info("步骤 1/7: 加载配置文件")
     logging.info("="*60)
     
-    report_dir = output_dir / 'report'
+    config = load_config(args.config)
+    logging.info(f"配置文件加载成功: {args.config}")
+    logging.info(f"输出目录: {output_dir}")
     
-    # Markdown report - commented out as we only need Word report
-    # md_report_path = generate_markdown_report(
-    #     results_df,
-    #     config_path=args.config,
-    #     figures_dir=str(figures_dir),
-    #     output_path=str(report_dir / '项目评估报告.md')
-    # )
+    # Copy configuration file to output directory
+    config_backup_path = output_dir / 'config_used.yaml'
+    output_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(args.config, config_backup_path)
+    logging.info(f"✓ 配置文件已备份至: {config_backup_path}")
+    logging.info("")
     
-    # Word report (with forecast results)
-    word_report_path = generate_word_report(
-        results_df,
-        config_path=args.config,
-        figures_dir=str(figures_dir),
-        output_path=str(report_dir / '项目评估报告.docx'),
-        forecast_df=forecast_df
-    )
-    logging.info(f"Word报告已生成: {word_report_path}")
+    # Find data file
+    data_path = config.get('data', 'data_path', default='data/raw')
+    file_pattern = config.get('data', 'file_pattern', default='*.xlsx')
+    
+    data_dir = Path(data_path)
+    if not data_dir.exists():
+        logging.error(f"错误: 数据目录不存在: {data_path}")
+        logging.error("请将数据文件放置在 data/raw/ 目录中")
+        sys.exit(1)
+    
+    data_files = list(data_dir.glob(file_pattern))
+    if not data_files:
+        logging.error(f"错误: 未找到匹配的数据文件: {data_path}/{file_pattern}")
+        logging.error("请将数据文件放置在 data/raw/ 目录中")
+        sys.exit(1)
+    
+    data_file = data_files[0]
+    logging.info(f"使用数据文件: {data_file}")
+    logging.info("")
+    
+    # Check if using multiple imputation strategies
+    imputation_config = config.get('data', 'imputation', default={})
+    strategies = imputation_config.get('strategies', [])
+    
+    if strategies and len(strategies) > 0:
+        # Multi-strategy mode
+        logging.info("="*60)
+        logging.info(f"🔄 多策略模式: 将依次运行 {len(strategies)} 个填充策略")
+        logging.info(f"策略列表: {', '.join(strategies)}")
+        logging.info("="*60)
+        logging.info("")
+        
+        report_dir = output_dir / 'report'
+        report_dir.mkdir(parents=True, exist_ok=True)
+        
+        for idx, strategy in enumerate(strategies, 1):
+            logging.info("")
+            logging.info("█"*60)
+            logging.info(f"运行策略 [{idx}/{len(strategies)}]: {strategy}")
+            logging.info("█"*60)
+            logging.info("")
+            
+            try:
+                results_df, forecast_df, figures_dir = run_single_strategy(
+                    config, data_file, output_dir, config_backup_path, 
+                    imputation_strategy=strategy
+                )
+                
+                # Generate Word report for this strategy
+                logging.info("="*60)
+                logging.info(f"步骤 7/7: 生成报告 (策略: {strategy})")
+                logging.info("="*60)
+                
+                word_report_path = generate_word_report(
+                    results_df,
+                    config_path=str(config_backup_path),
+                    figures_dir=str(figures_dir),
+                    output_path=str(report_dir / f'项目评估报告_{strategy}.docx'),
+                    forecast_df=forecast_df
+                )
+                logging.info(f"✓ Word报告已生成: {word_report_path}")
+                logging.info("")
+                
+            except Exception as e:
+                logging.error(f"❌ 策略 {strategy} 运行失败: {e}")
+                logging.error(f"跳过该策略,继续下一个...")
+                import traceback
+                logging.error(traceback.format_exc())
+                continue
+        
+        logging.info("="*60)
+        logging.info(f"✓ 所有策略运行完成! 共生成 {len(strategies)} 个报告")
+        logging.info("="*60)
+        
+    else:
+        # Single strategy mode
+        single_method = imputation_config.get('method', 'nearest_p')
+        logging.info(f"单一策略模式: {single_method}")
+        logging.info("")
+        
+        results_df, forecast_df, figures_dir = run_single_strategy(
+            config, data_file, output_dir, config_backup_path, 
+            imputation_strategy=None
+        )
+        
+        # Generate report
+        logging.info("="*60)
+        logging.info("步骤 7/7: 生成报告")
+        logging.info("="*60)
+        
+        report_dir = output_dir / 'report'
+        
+        word_report_path = generate_word_report(
+            results_df,
+            config_path=str(config_backup_path),
+            figures_dir=str(figures_dir),
+            output_path=str(report_dir / '项目评估报告.docx'),
+            forecast_df=forecast_df
+        )
+        logging.info(f"Word报告已生成: {word_report_path}")
     
     # Copy to latest outputs folder for convenience
     latest_dir = output_base / 'latest'
@@ -274,13 +360,10 @@ def main():
     logging.info(f"本次运行输出目录: {output_dir}")
     logging.info(f"最新结果链接: {latest_dir}")
     logging.info(f"  - 日志文件: {log_file}")
-    logging.info(f"  - 指标表: {metrics_dir / 'cv_metrics.csv'}")
-    logging.info(f"  - 模型目录: {models_dir}")
-    logging.info(f"  - 图表目录: {figures_dir}")
-    if forecast_df is not None and len(forecast_df) > 0:
-        logging.info(f"  - 预测结果: {output_dir / 'forecast_results.csv'} ({len(forecast_df)} 个时间点)")
-    # logging.info(f"  - Markdown报告: {md_report_path}")  # Not generating MD report
-    logging.info(f"  - Word报告: {word_report_path}")
+    if strategies and len(strategies) > 0:
+        logging.info(f"  - 报告目录: {report_dir} (共 {len(strategies)} 个报告)")
+    else:
+        logging.info(f"  - 报告目录: {report_dir}")
     logging.info("="*60)
 
 
