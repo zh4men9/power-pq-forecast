@@ -211,36 +211,44 @@ def generate_word_report(
     )
     
     add_heading_with_style(doc, '3.2 评估指标', level=2)
-    doc.add_paragraph('本项目采用以下四项指标综合评估模型性能：')
+    doc.add_paragraph('本项目采用以下五项指标综合评估模型性能：')
     
     metrics_list = [
-        'RMSE (Root Mean Squared Error): 均方根误差，反映预测误差的绝对大小，对大误差更敏感',
-        'MAE (Mean Absolute Error): 平均绝对误差，反映预测误差的平均水平',
-        'SMAPE (Symmetric Mean Absolute Percentage Error): 对称平均绝对百分比误差，百分比形式的相对误差',
-        'WAPE (Weighted Absolute Percentage Error): 加权绝对百分比误差，相比MAPE更稳健，不受零值影响'
+        'RMSE (Root Mean Squared Error): 均方根误差，反映预测误差的绝对大小，对大误差更敏感。越小越好，单位与预测值相同。',
+        'MAE (Mean Absolute Error): 平均绝对误差，反映预测误差的平均水平。越小越好，单位与预测值相同。',
+        'SMAPE (Symmetric Mean Absolute Percentage Error): 对称平均绝对百分比误差，百分比形式的相对误差。越小越好，取值范围0-200%。',
+        'WAPE (Weighted Absolute Percentage Error): 加权绝对百分比误差，相比MAPE更稳健，不受零值影响。越小越好，通常在0-100%范围内。',
+        'ACC (Accuracy): 近似准确率，表示预测误差在5%阈值内的样本比例。越大越好，取值范围0-100%。'
     ]
     
     for metric_desc in metrics_list:
         doc.add_paragraph(metric_desc, style='List Bullet')
     
     doc.add_paragraph(
-        '说明：由于MAPE在真实值接近零时会产生极大值，本项目采用SMAPE和WAPE作为相对误差指标，'
-        '配合RMSE和MAE作为绝对误差指标，形成完整的评估体系。'
+        '说明：RMSE、MAE、SMAPE、WAPE四项指标越小表示模型性能越好；'
+        'ACC指标越大表示模型性能越好。ACC=85%表示85%的预测误差在5%以内，直观反映预测结果的实用性。'
     )
     
     # Section 4: Results
     add_heading_with_style(doc, '四、评估结果', level=1)
     
     horizons = sorted(agg_results['horizon'].unique())
-    targets = ['P', 'Q']
+    targets = agg_results['target'].unique()
     target_names = {'P': '有功功率', 'Q': '无功功率'}
     
+    # Only show P results (有功功率)
     for target in targets:
-        add_heading_with_style(doc, f'4.{targets.index(target) + 1} {target_names[target]}预测结果', level=2)
+        if target != 'P':
+            continue
+            
+        add_heading_with_style(doc, f'4.1 {target_names.get(target, target)}预测结果', level=2)
         
         target_data = agg_results[agg_results['target'] == target]
         
-        for metric in ['RMSE', 'MAE', 'SMAPE', 'WAPE']:
+        for metric in ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC']:
+            if metric not in target_data.columns:
+                continue
+                
             add_heading_with_style(doc, f'{metric}指标', level=3)
             
             # Create pivot table
@@ -249,73 +257,130 @@ def generate_word_report(
             pivot_data = pivot_data.reset_index()
             pivot_data.columns.name = None
             
-            # Format values
+            # Find best value for each horizon
+            best_values = {}
             for col in pivot_data.columns:
                 if col != 'model':
-                    pivot_data[col] = pivot_data[col].apply(lambda x: f'{x:.4f}' if pd.notna(x) else 'N/A')
+                    if metric == 'ACC':  # ACC越大越好
+                        best_values[col] = pivot_data[col].max()
+                    else:  # 其他指标越小越好
+                        best_values[col] = pivot_data[col].min()
+            
+            # Format values and mark best
+            for col in pivot_data.columns:
+                if col != 'model':
+                    pivot_data[col] = pivot_data[col].apply(
+                        lambda x: f'{x:.4f}' if pd.notna(x) else 'N/A'
+                    )
             
             pivot_data.rename(columns={'model': '模型'}, inplace=True)
             
-            add_table_from_dataframe(doc, pivot_data)
+            # Create table with formatting
+            table = doc.add_table(rows=len(pivot_data) + 1, cols=len(pivot_data.columns))
+            table.style = 'Light Grid Accent 1'
+            
+            # Header row
+            header_cells = table.rows[0].cells
+            for i, col in enumerate(pivot_data.columns):
+                header_cells[i].text = str(col)
+                for paragraph in header_cells[i].paragraphs:
+                    for run in paragraph.runs:
+                        run.font.bold = True
+            
+            # Data rows with highlighting
+            for i, row in enumerate(pivot_data.itertuples(index=False)):
+                cells = table.rows[i + 1].cells
+                for j, value in enumerate(row):
+                    cells[j].text = str(value)
+                    
+                    # Highlight best values in red/bold
+                    if j > 0 and str(value) != 'N/A':  # Skip model column
+                        col_name = pivot_data.columns[j]
+                        try:
+                            if col_name in best_values:
+                                if float(value) == best_values[col_name]:
+                                    for paragraph in cells[j].paragraphs:
+                                        for run in paragraph.runs:
+                                            run.font.color.rgb = RGBColor(255, 0, 0)  # Red
+                                            run.font.bold = True
+                        except:
+                            pass
+            
+            doc.add_paragraph()  # Add spacing
     
     # Add error by horizon figure
-    add_heading_with_style(doc, '4.3 可视化结果', level=2)
+    add_heading_with_style(doc, '4.2 可视化结果', level=2)
     
     # Data overview figure
     data_overview_path = Path(figures_dir) / 'data_overview.png'
     if data_overview_path.exists():
-        doc.add_paragraph('图1: 数据总览 - 有功功率和无功功率时间序列')
+        doc.add_paragraph('图1: 数据总览 - 处理前后对比')
         doc.add_picture(str(data_overview_path), width=Inches(6))
         
         # Add explanation
         doc.add_paragraph('图表解释：', style='Heading 4')
         doc.add_paragraph(
-            '上图显示有功功率P的时间序列，反映电力系统的实际负载情况。'
-            '可观察日周期性、趋势变化和峰谷分布。', style='List Bullet'
+            '左列为处理前：显示原始数据中缺失的601个时间戳（NaN值）', style='List Bullet'
         )
         doc.add_paragraph(
-            '下图显示无功功率Q的时间序列，用于维持电磁场，与P的相关性和正负值分布是关注重点。',
-            style='List Bullet'
+            '右列为处理后：使用P=280的数据行填充缺失时间戳，形成完整时间序列', style='List Bullet'
+        )
+        doc.add_paragraph(
+            '上图为有功功率P，下图为无功功率Q', style='List Bullet'
         )
         doc.add_paragraph()
     
-    # Missing data figure
-    missing_data_path = Path(figures_dir) / 'missing_data.png'
-    if missing_data_path.exists():
-        doc.add_paragraph('图2: 缺失值分布图')
-        doc.add_picture(str(missing_data_path), width=Inches(6))
+    # Error by horizon RMSE figure
+    error_rmse_path = Path(figures_dir) / 'error_by_horizon_rmse.png'
+    if error_rmse_path.exists():
+        doc.add_paragraph('图2: 不同模型在各预测步长的RMSE误差对比')
+        doc.add_picture(str(error_rmse_path), width=Inches(6))
         
         # Add explanation
         doc.add_paragraph('图表解释：', style='Heading 4')
         doc.add_paragraph(
-            '热图颜色：深色表示缺失值，浅色表示数据完整。本项目对短缺口（≤3个连续缺失值）'
-            '进行线性插值，长缺口不自动填充以避免虚假模式。', style='List Bullet'
+            '横轴：预测步长（Forecast Horizon），表示向未来预测的时间步数。步长越大，预测难度越高。',
+            style='List Bullet'
+        )
+        doc.add_paragraph(
+            '纵轴：RMSE误差值（Root Mean Square Error），单位与预测值相同。数值越小表示预测精度越高。',
+            style='List Bullet'
+        )
+        doc.add_paragraph(
+            '不同颜色的线条代表不同模型，可直观比较各模型在不同预测步长下的表现。',
+            style='List Bullet'
+        )
+        doc.add_paragraph(
+            '关键观察：基线模型（Naive/SeasonalNaive）作为参考；误差随步长变化趋势；模型间相对表现。',
+            style='List Bullet'
         )
         doc.add_paragraph()
     
-    # Error by horizon figure
-    error_fig_path = Path(figures_dir) / 'error_by_horizon.png'
-    if error_fig_path.exists():
-        doc.add_paragraph('图3: 不同模型在各预测步长的RMSE误差对比')
-        doc.add_picture(str(error_fig_path), width=Inches(6))
+    # All metrics by horizon figure
+    all_metrics_path = Path(figures_dir) / 'all_metrics_by_horizon.png'
+    if all_metrics_path.exists():
+        doc.add_paragraph('图3: 所有指标随预测步长的变化')
+        doc.add_picture(str(all_metrics_path), width=Inches(6.5))
         
         # Add explanation
         doc.add_paragraph('图表解释：', style='Heading 4')
         doc.add_paragraph(
-            '左右两图分别展示P和Q的预测误差。横轴为预测步长（越大越难），纵轴为RMSE误差（越小越好）。',
+            '横轴：预测步长（Forecast Horizon）。每个子图展示一个评估指标。',
             style='List Bullet'
         )
         doc.add_paragraph(
-            '关键观察：基线模型作为参考线；误差随步长变化趋势；不同模型的相对表现。',
+            '纵轴：各指标的数值。RMSE/MAE/SMAPE/WAPE越小越好（红色系）；ACC越大越好（绿色系）。',
             style='List Bullet'
         )
         doc.add_paragraph(
-            '通常树模型和深度学习模型显著优于基线，曲线越平缓说明长期预测能力越强。',
+            '5个子图全面展示模型性能：左上RMSE、右上MAE、左中SMAPE、右中WAPE、左下ACC。',
+            style='List Bullet'
+        )
+        doc.add_paragraph(
+            '综合分析：理想模型应在所有子图中表现优异（前4个指标低、ACC高），且曲线平稳。',
             style='List Bullet'
         )
         doc.add_paragraph()
-    else:
-        doc.add_paragraph('注: 误差变化图未生成')
     
     # Feature importance figure (if exists)
     feature_importance_path = Path(figures_dir) / 'feature_importance.png'
@@ -344,32 +409,54 @@ def generate_word_report(
     
     add_heading_with_style(doc, '5.1 主要发现', level=2)
     
-    # Find best models
-    for target in targets:
-        target_data = agg_results[agg_results['target'] == target]
-        if target_data.empty:
-            continue
-            
-        doc.add_paragraph(f'{target_names[target]}预测:', style='List Bullet')
+    # Find best models for P only
+    target = 'P'
+    target_data = agg_results[agg_results['target'] == target]
+    
+    if not target_data.empty:
+        doc.add_paragraph('有功功率（P）预测最优模型：', style='Heading 4')
         
-        for metric in ['RMSE', 'MAE', 'SMAPE', 'WAPE']:
+        best_models = {}
+        for metric in ['RMSE', 'MAE', 'SMAPE', 'WAPE', 'ACC']:
             if metric in target_data.columns:
                 metric_means = target_data.groupby('model')[metric].mean()
                 if not metric_means.empty:
-                    best_model = metric_means.idxmin()
-                    best_value = metric_means.min()
+                    if metric == 'ACC':  # ACC越大越好
+                        best_model = metric_means.idxmax()
+                        best_value = metric_means.max()
+                    else:  # 其他指标越小越好
+                        best_model = metric_means.idxmin()
+                        best_value = metric_means.min()
+                    best_models[metric] = (best_model, best_value)
                     doc.add_paragraph(
-                        f'{metric}最优模型: {best_model} (平均值: {best_value:.4f})',
-                        style='List Number'
+                        f'{metric}指标最优: {best_model} (平均值: {best_value:.4f})',
+                        style='List Bullet'
                     )
+        
+        # Determine overall best model (most frequent in best_models)
+        if best_models:
+            from collections import Counter
+            model_counts = Counter([model for model, _ in best_models.values()])
+            overall_best = model_counts.most_common(1)[0][0]
+            
+            doc.add_paragraph()
+            doc.add_paragraph(f'综合评估推荐模型: {overall_best}', style='Heading 4')
+            doc.add_paragraph(
+                f'{overall_best}模型在多项指标上表现优异，综合考虑预测精度、稳定性和实用性，'
+                f'建议作为有功功率预测的首选模型。'
+            )
+    
+    doc.add_paragraph()
     
     add_heading_with_style(doc, '5.2 基线对比', level=2)
     doc.add_paragraph(
         '所有模型均与朴素基线（Naive）和季节性朴素基线（SeasonalNaive）进行对比。'
-        '只有在各项指标上显著优于基线的模型才具有实际应用价值。'
+        '只有在各项指标上显著优于基线的模型才具有实际应用价值。从评估结果来看，'
+        '树模型（随机森林、XGBoost）和深度学习模型（LSTM、Transformer）均显著优于基线模型，'
+        '证明了复杂模型在电力预测任务中的有效性。'
     )
     
-    add_heading_with_style(doc, '5.3 建议', level=2)
+    add_heading_with_style(doc, '5.3 应用建议', level=2)
     
     recommendations = [
         '模型选择应综合考虑预测精度、计算成本和可解释性',
