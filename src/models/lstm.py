@@ -154,12 +154,12 @@ class LSTMForecaster:
         
         # Set device with auto-detection
         # TEMPORARY: Force CPU to test if MPS is causing NaN issues
-        logging.info("🔧 临时强制使用 CPU 设备进行训练 (测试 MPS NaN 问题)")
-        self.device = torch.device('cpu')
-        # if device is None:
-        #     self.device = get_optimal_device()
-        # else:
-        #     self.device = torch.device(device)
+        # logging.info("🔧 临时强制使用 CPU 设备进行训练 (测试 MPS NaN 问题)")
+        # self.device = torch.device('cpu')
+        if device is None:
+            self.device = get_optimal_device()
+        else:
+            self.device = torch.device(device)
         
         self.model = None
         self.scaler_mean_ = None
