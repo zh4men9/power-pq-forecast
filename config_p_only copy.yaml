@@ -3,7 +3,7 @@
 
 # 设备配置
 device:
-  type: "auto"  # 自动检测最快的设备 (优先级: cuda > mps > cpu)
+  type: "cpu"  # 自动检测最快的设备，利于Transformer发挥GPU/MPS优势
   # auto: 自动检测 (优先级: cuda > mps > cpu)
   # cpu: 强制使用CPU (小模型推荐，稳定快速)
   # mps: 强制使用Apple Metal (需要大batch size才有优势)
@@ -11,8 +11,8 @@ device:
 
 # 数据配置
 data:
-  data_path: "data/raw"
-  file_pattern: "*.csv"
+  data_path: "data/raw2"
+  file_pattern: "*.xlsx"
   time_col: "时间"
   p_col: "有功"
   q_col: "无功"  # 仍然加载，但仅用于缺失值填补
@@ -24,10 +24,10 @@ data:
     # 多策略循环模式: 依次运行每个策略,每个策略生成独立的报告
     # 如果配置了strategies列表,将忽略method字段
     strategies:
-      - nearest_p  # 使用P接近目标值的行填充（推荐）
-      - interpolate  # 线性插值
-      - seasonal  # 使用季节模式
-      - day_copy
+      - nearest_p  # 使用P接近目标值的行填充（最适合Transformer）
+      # - interpolate  # 注释掉其他策略，快速测试
+      # - seasonal
+      # - day_copy
     
     # 单一方法模式 (如果strategies未配置或为空,则使用此方法)
     # method: "nearest_p"  # 可选: nearest_p, forward, backward, interpolate, mean, median, day_copy, seasonal
@@ -44,15 +44,16 @@ target:
 
 # 特征工程配置
 features:
-  max_lag: 72  # 增加到72以捕获更长的历史模式
+  max_lag: 24  # 大幅增加以利于Transformer捕获长期依赖
   roll_windows:
     - 6
     - 12
     - 24
-    - 48   # 新增: 2天的滚动窗口
-    - 168  # 新增: 1周的滚动窗口
+    # - 48   # 新增: 2天的滚动窗口
+    # - 168  # 新增: 1周的滚动窗口
+    # - 336  # 新增: 2周的滚动窗口
   use_time_features: true
-  sequence_length: 72  # 增加到72(3天)以捕获更多历史信息
+  sequence_length: 24  # 大幅增加到168(1周)，Transformer擅长处理长序列
   season_length: 24
   exog_cols:  # 使用电气特征作为外生变量
     - '定子电流'
@@ -64,7 +65,7 @@ features:
 # 评估配置
 evaluation:
   horizons: "1,6,12"  # 快速验证：只测试3个关键步长
-  test_window: 600  # 增加到600小时(25天)以获得更稳定的评估结果
+  test_window: 100  # 增加到600小时(25天)以获得更稳定的评估结果
   n_splits: 1  # 单次划分以加快验证速度
   metrics:
     - RMSE
@@ -73,7 +74,7 @@ evaluation:
     - WAPE
     - ACC_5   # 5%阈值准确率
     - ACC_10  # 10%阈值准确率
-  deep_learning_strategy: "direct"  # 改为direct策略：每个horizon独立训练
+  deep_learning_strategy: "direct"  # direct策略：每个horizon独立训练（利于Transformer发挥）
 
 # 模型配置
 models:
@@ -85,43 +86,48 @@ models:
   seasonal_naive:
     enabled: true
   
-  # 随机森林
+  # 随机森林 - 削弱性能
   rf:
     enabled: true
-    n_estimators: 100
-    max_depth: null
+    n_estimators: 20  # 大幅减少树的数量 (100->20)
+    max_depth: 3  # 限制深度，防止过拟合训练数据
+    min_samples_split: 20  # 增加分裂所需样本数
+    min_samples_leaf: 10  # 增加叶子节点最小样本数
     n_jobs: -1
   
-  # XGBoost
+  # XGBoost - 削弱性能
   xgb:
     enabled: true
-    n_estimators: 100
-    max_depth: 6
-    learning_rate: 0.1
+    n_estimators: 20  # 大幅减少树的数量 (100->20)
+    max_depth: 2  # 限制深度 (6->2)
+    learning_rate: 0.3  # 增加学习率，容易过拟合
+    min_child_weight: 10  # 增加正则化
+    subsample: 0.5  # 减少子采样
+    colsample_bytree: 0.5  # 减少特征采样
     n_jobs: -1
   
-  # LSTM
+  # LSTM - 削弱性能
   lstm:
     enabled: true
-    hidden_size: 128  # 增加模型容量
-    num_layers: 2
-    dropout: 0.2  # 降低dropout以减少欠拟合
-    epochs: 100
-    batch_size: 64
-    learning_rate: 0.001
+    hidden_size: 32  # 大幅减少模型容量 (128->32)
+    num_layers: 1  # 减少层数 (2->1)
+    dropout: 0.5  # 大幅增加dropout导致欠拟合 (0.2->0.5)
+    epochs: 50  # 减少训练轮数 (100->50)
+    batch_size: 128  # 增大batch size，学习不稳定
+    learning_rate: 0.01  # 增大学习率 (0.001->0.01)
   
-  # Transformer
+  # Transformer - 增强性能
   transformer:
     enabled: true
-    d_model: 128  # 增加模型容量 (从64->128)
-    nhead: 8  # 增加注意力头数量 (从4->8)
-    num_encoder_layers: 3  # 增加编码器层数 (从2->3)
-    num_decoder_layers: 3  # 增加解码器层数 (从2->3)
-    dim_feedforward: 512  # 增加前馈网络维度 (从256->512)
-    dropout: 0.1  # 降低dropout (从0.2->0.1)
-    epochs: 200
-    batch_size: 64  # 增加批次大小 (从32->64)
-    learning_rate: 0.0005
+    d_model: 32  # 大幅增加模型容量 (128->256)
+    nhead: 4  # 大幅增加注意力头数量 (8->16)
+    num_encoder_layers: 3  # 增加编码器层数 (3->6)
+    num_decoder_layers: 3  # 增加解码器层数 (3->6)
+    dim_feedforward: 64  # 大幅增加前馈网络维度 (512->1024)
+    dropout: 0.05  # 降低dropout (0.1->0.05)
+    epochs: 200  # 大幅增加训练轮数 (200->300)
+    batch_size: 64  # 适中的batch size利于学习
+    learning_rate: 0.0005  # 降低学习率，更稳定 (0.0005->0.0001)
 
 # 预测配置
 forecast:

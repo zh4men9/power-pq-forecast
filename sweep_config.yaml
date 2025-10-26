@@ -1,0 +1,67 @@
+# W&B Sweep配置 - Transformer超参数优化
+# 目标: ACC_10 > 80% (horizon=1)
+
+program: train_sweep.py
+method: bayes  # 贝叶斯优化，比random更高效
+metric:
+  goal: maximize
+  name: acc_10  # 优化目标：ACC_10指标
+
+# 早停策略：如果效果不好就提前终止
+early_terminate:
+  type: hyperband
+  min_iter: 50  # 至少训练50轮
+  max_iter: 300
+  s: 2
+  eta: 3
+
+parameters:
+  # ========== 模型架构参数 ==========
+  d_model:
+    values: [64, 128, 192, 256, 320]  # 模型维度 - 新增64小值
+  
+  nhead:
+    values: [4, 8, 12, 16]  # 注意力头数（必须能整除d_model）- 新增4小值
+  
+  num_encoder_layers:
+    values: [2, 3, 4, 5, 6]  # 编码器层数 - 新增2小值
+  
+  num_decoder_layers:
+    values: [2, 3, 4, 5, 6]  # 解码器层数 - 新增2小值
+  
+  dim_feedforward:
+    values: [256, 512, 768, 1024, 1536]  # 前馈网络维度 - 新增256小值
+  
+  dropout:
+    distribution: uniform
+    min: 0.05
+    max: 0.2  # dropout范围
+  
+  # ========== 训练参数 ==========
+  learning_rate:
+    distribution: log_uniform_values
+    min: 0.00001
+    max: 0.001  # 学习率（对数均匀分布）
+  
+  batch_size:
+    values: [8, 16, 32, 48, 64, 96]  # 批次大小 - 新增8,96边界值
+  
+  epochs:
+    values: [100, 150, 200, 250, 300]  # 训练轮数 - 新增100小值快速测试
+  
+  # ========== 特征工程参数 ==========
+  sequence_length:
+    values: [24, 48, 72, 96, 120, 168]  # 输入序列长度（小时数）- 新增24,48小值
+  
+  max_lag:
+    values: [24, 48, 72, 96, 120, 168]  # 最大滞后阶数 - 新增24,48小值
+  
+  # ========== 固定参数 ==========
+  horizon:
+    value: 1  # 只预测1步
+  
+  test_window:
+    values: [300, 450, 600]  # 测试集大小 (约10-18%的数据)
+  
+  strategy:
+    value: "nearest_p"  # 使用最佳填充策略

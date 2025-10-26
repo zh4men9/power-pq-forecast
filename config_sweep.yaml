@@ -1,0 +1,94 @@
+# Sweep专用配置 - 使用data/raw2数据
+# 基于 config_p_only.yaml，修改数据路径
+
+# 设备配置
+device:
+  type: "cpu"  # 自动检测最快的设备
+
+# 数据配置
+data:
+  data_path: "data/raw2"  # 使用raw2数据
+  file_pattern: "*.xlsx"   # xlsx格式
+  time_col: "时间"
+  p_col: "有功"
+  q_col: "无功"
+  freq: "H"
+  tz: null
+  interp_limit: 3
+  imputation:
+    strategies:
+      - nearest_p
+    target_p_value: 349
+    day_copy_days_back: 7
+    seasonal_period: 24
+
+# 预测目标配置
+target:
+  predict_p: true
+  predict_q: false
+
+# 特征工程配置（sweep会覆盖这些参数）
+features:
+  max_lag: 72
+  roll_windows:
+    - 6
+    - 12
+    - 24
+    - 48
+    - 168
+  use_time_features: true
+  sequence_length: 72
+  season_length: 24
+  exog_cols:
+    - '定子电流'
+    - '定子电压'
+    - '转子电压'
+    - '转子电流'
+    - '励磁电流'
+
+# 评估配置（sweep会覆盖test_window）
+evaluation:
+  horizons: "1"  # 只预测1步
+  test_window: 600
+  n_splits: 1
+  metrics:
+    - RMSE
+    - MAE
+    - SMAPE
+    - WAPE
+    - ACC_5
+    - ACC_10
+  deep_learning_strategy: "direct"
+
+# 模型配置（sweep会覆盖transformer参数）
+models:
+  transformer:
+    enabled: true
+    d_model: 128
+    nhead: 8
+    num_encoder_layers: 3
+    num_decoder_layers: 3
+    dim_feedforward: 512
+    dropout: 0.1
+    epochs: 200
+    batch_size: 64
+    learning_rate: 0.0005
+
+# 预测配置
+forecast:
+  enabled: false  # sweep不需要预测
+
+# 图形配置
+plotting:
+  fig_dpi: 150
+  font_priority:
+    - SimHei
+    - Microsoft YaHei
+    - STHeiti
+    - PingFang SC
+
+# 报告配置
+report:
+  generate_word: false  # sweep不生成报告
+  generate_markdown: false
+  include_forecast_table: false

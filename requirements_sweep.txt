@@ -1,0 +1,3 @@
+# W&B Sweep超参数优化依赖
+wandb>=0.16.0
+pyyaml>=6.0
