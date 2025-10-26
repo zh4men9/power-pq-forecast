@@ -121,18 +121,31 @@ def generate_word_report(
         '朴素预测是最简单的基线模型，使用最后一个观测值作为未来所有时间步的预测值。'
         '虽然方法简单，但在许多实际应用中表现出色，常作为其他模型的基准对比。'
     )
+    doc.add_paragraph('参数配置：', style='Heading 4')
+    doc.add_paragraph('无需训练参数，直接使用最后观测值进行预测', style='List Bullet')
+    doc.add_paragraph()
     
     add_heading_with_style(doc, '2.2 季节朴素预测（Seasonal Naive）', level=2)
     doc.add_paragraph(
         '季节朴素预测考虑了数据的季节性特征，使用上一个季节周期对应时刻的观测值进行预测。'
         '适用于具有明显周期性模式的时间序列数据，如电力负荷的日周期或周周期特性。'
     )
+    doc.add_paragraph('参数配置：', style='Heading 4')
+    doc.add_paragraph('seasonal_period: 96（对应24小时，每15分钟一个数据点）', style='List Bullet')
+    doc.add_paragraph()
     
     add_heading_with_style(doc, '2.3 随机森林（Random Forest）', level=2)
     doc.add_paragraph(
         '随机森林是一种集成学习方法，通过构建多个决策树并综合其预测结果来提高模型的准确性和稳定性。'
         '该模型能够自动捕获特征之间的非线性关系，并提供特征重要性分析，具有较强的泛化能力和抗过拟合能力。'
     )
+    doc.add_paragraph('参数配置：', style='Heading 4')
+    doc.add_paragraph('n_estimators: 100（决策树数量）', style='List Bullet')
+    doc.add_paragraph('max_depth: 10（树的最大深度）', style='List Bullet')
+    doc.add_paragraph('min_samples_split: 10（内部节点再划分所需最小样本数）', style='List Bullet')
+    doc.add_paragraph('min_samples_leaf: 5（叶节点最少样本数）', style='List Bullet')
+    doc.add_paragraph('random_state: 42（随机种子，保证结果可复现）', style='List Bullet')
+    doc.add_paragraph()
     
     add_heading_with_style(doc, '2.4 XGBoost', level=2)
     doc.add_paragraph(
@@ -140,6 +153,14 @@ def generate_word_report(
         '相比随机森林，XGBoost在处理大规模数据时性能更优，且能够更好地处理缺失值和异常值。'
         '该算法在各类机器学习竞赛中表现优异，广泛应用于时间序列预测任务。'
     )
+    doc.add_paragraph('参数配置：', style='Heading 4')
+    doc.add_paragraph('n_estimators: 100（提升轮数）', style='List Bullet')
+    doc.add_paragraph('max_depth: 6（树的最大深度）', style='List Bullet')
+    doc.add_paragraph('learning_rate: 0.1（学习率，控制每棵树的权重）', style='List Bullet')
+    doc.add_paragraph('subsample: 0.8（训练每棵树时的样本采样比例）', style='List Bullet')
+    doc.add_paragraph('colsample_bytree: 0.8（构建每棵树时的特征采样比例）', style='List Bullet')
+    doc.add_paragraph('random_state: 42', style='List Bullet')
+    doc.add_paragraph()
     
     add_heading_with_style(doc, '2.5 LSTM（长短期记忆网络）', level=2)
     doc.add_paragraph(
@@ -147,6 +168,15 @@ def generate_word_report(
         '通过引入门控机制（输入门、遗忘门、输出门），LSTM能够有效捕获时间序列中的长期依赖关系，'
         '避免了传统RNN的梯度消失问题。适用于复杂的时序模式识别和多步预测任务。'
     )
+    doc.add_paragraph('参数配置：', style='Heading 4')
+    doc.add_paragraph('hidden_size: 64（隐藏层维度）', style='List Bullet')
+    doc.add_paragraph('num_layers: 2（LSTM堆叠层数）', style='List Bullet')
+    doc.add_paragraph('dropout: 0.2（防止过拟合的丢弃率）', style='List Bullet')
+    doc.add_paragraph('epochs: 50（训练轮数）', style='List Bullet')
+    doc.add_paragraph('batch_size: 32（批次大小）', style='List Bullet')
+    doc.add_paragraph('learning_rate: 0.001（Adam优化器学习率）', style='List Bullet')
+    doc.add_paragraph('硬件加速: 自动检测CUDA GPU / Apple MPS / CPU', style='List Bullet')
+    doc.add_paragraph()
     
     add_heading_with_style(doc, '2.6 Transformer', level=2)
     doc.add_paragraph(
@@ -155,6 +185,18 @@ def generate_word_report(
         '位置编码（Positional Encoding）保留了序列的时序信息。相比LSTM，Transformer在处理长序列时更加高效，'
         '并在自然语言处理和时间序列预测等领域取得了显著成果。'
     )
+    doc.add_paragraph('参数配置：', style='Heading 4')
+    doc.add_paragraph('d_model: 64（模型维度）', style='List Bullet')
+    doc.add_paragraph('nhead: 4（多头注意力的头数）', style='List Bullet')
+    doc.add_paragraph('num_encoder_layers: 2（编码器层数）', style='List Bullet')
+    doc.add_paragraph('num_decoder_layers: 2（解码器层数）', style='List Bullet')
+    doc.add_paragraph('dim_feedforward: 256（前馈网络维度）', style='List Bullet')
+    doc.add_paragraph('dropout: 0.1（丢弃率）', style='List Bullet')
+    doc.add_paragraph('epochs: 50（训练轮数）', style='List Bullet')
+    doc.add_paragraph('batch_size: 32（批次大小）', style='List Bullet')
+    doc.add_paragraph('learning_rate: 0.001（Adam优化器学习率）', style='List Bullet')
+    doc.add_paragraph('硬件加速: 自动检测CUDA GPU / Apple MPS / CPU', style='List Bullet')
+    doc.add_paragraph()
     
     doc.add_paragraph()
     
@@ -224,6 +266,17 @@ def generate_word_report(
     if data_overview_path.exists():
         doc.add_paragraph('图1: 数据总览 - 有功功率和无功功率时间序列')
         doc.add_picture(str(data_overview_path), width=Inches(6))
+        
+        # Add explanation
+        doc.add_paragraph('图表解释：', style='Heading 4')
+        doc.add_paragraph(
+            '上图显示有功功率P的时间序列，反映电力系统的实际负载情况。'
+            '可观察日周期性、趋势变化和峰谷分布。', style='List Bullet'
+        )
+        doc.add_paragraph(
+            '下图显示无功功率Q的时间序列，用于维持电磁场，与P的相关性和正负值分布是关注重点。',
+            style='List Bullet'
+        )
         doc.add_paragraph()
     
     # Missing data figure
@@ -231,6 +284,13 @@ def generate_word_report(
     if missing_data_path.exists():
         doc.add_paragraph('图2: 缺失值分布图')
         doc.add_picture(str(missing_data_path), width=Inches(6))
+        
+        # Add explanation
+        doc.add_paragraph('图表解释：', style='Heading 4')
+        doc.add_paragraph(
+            '热图颜色：深色表示缺失值，浅色表示数据完整。本项目对短缺口（≤3个连续缺失值）'
+            '进行线性插值，长缺口不自动填充以避免虚假模式。', style='List Bullet'
+        )
         doc.add_paragraph()
     
     # Error by horizon figure
@@ -238,6 +298,21 @@ def generate_word_report(
     if error_fig_path.exists():
         doc.add_paragraph('图3: 不同模型在各预测步长的RMSE误差对比')
         doc.add_picture(str(error_fig_path), width=Inches(6))
+        
+        # Add explanation
+        doc.add_paragraph('图表解释：', style='Heading 4')
+        doc.add_paragraph(
+            '左右两图分别展示P和Q的预测误差。横轴为预测步长（越大越难），纵轴为RMSE误差（越小越好）。',
+            style='List Bullet'
+        )
+        doc.add_paragraph(
+            '关键观察：基线模型作为参考线；误差随步长变化趋势；不同模型的相对表现。',
+            style='List Bullet'
+        )
+        doc.add_paragraph(
+            '通常树模型和深度学习模型显著优于基线，曲线越平缓说明长期预测能力越强。',
+            style='List Bullet'
+        )
         doc.add_paragraph()
     else:
         doc.add_paragraph('注: 误差变化图未生成')
@@ -247,6 +322,21 @@ def generate_word_report(
     if feature_importance_path.exists():
         doc.add_paragraph('图4: 特征重要性排序（树模型）')
         doc.add_picture(str(feature_importance_path), width=Inches(6))
+        
+        # Add explanation
+        doc.add_paragraph('图表解释：', style='Heading 4')
+        doc.add_paragraph(
+            '横轴为重要性得分（0-1），纵轴为特征名称（按重要性排序）。',
+            style='List Bullet'
+        )
+        doc.add_paragraph(
+            '滞后特征（如P_lag_1）通常最重要，时间特征捕获周期性，外生变量特征体现额外信息价值。',
+            style='List Bullet'
+        )
+        doc.add_paragraph(
+            '应用价值：识别关键特征、指导特征选择、验证外生变量贡献。',
+            style='List Bullet'
+        )
         doc.add_paragraph()
     
     # Section 5: Conclusions

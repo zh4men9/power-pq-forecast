@@ -7,6 +7,38 @@ import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 from typing import Optional, Tuple
+import platform
+import time
+from tqdm import tqdm
+
+
+def get_optimal_device():
+    """
+    自动检测并返回最优计算设备
+    
+    优先级:
+    1. CUDA GPU (NVIDIA)
+    2. MPS (Apple Silicon Mac)
+    3. CPU
+    
+    Returns:
+        torch.device: 最优设备
+    """
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+        print(f"✓ 使用 CUDA GPU: {torch.cuda.get_device_name(0)}")
+        print(f"  显存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        device = torch.device('mps')
+        system = platform.system()
+        machine = platform.machine()
+        print(f"✓ 使用 Apple Metal (MPS) 加速")
+        print(f"  系统: {system} {machine}")
+    else:
+        device = torch.device('cpu')
+        print(f"⚠ 使用 CPU (建议使用GPU以加快训练)")
+    
+    return device
 
 
 class LSTMModel(nn.Module):
@@ -99,9 +131,9 @@ class LSTMForecaster:
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         
-        # Set device
+        # Set device with auto-detection
         if device is None:
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            self.device = get_optimal_device()
         else:
             self.device = torch.device(device)
         
@@ -160,10 +192,18 @@ class LSTMForecaster:
         criterion = nn.MSELoss()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
         
-        # Training loop
+        # Training loop with progress bar
         self.model.train()
-        for epoch in range(self.epochs):
+        start_time = time.time()
+        
+        # Use tqdm for progress visualization
+        epoch_pbar = tqdm(range(self.epochs), desc='LSTM训练', unit='epoch', 
+                         ncols=100, colour='green')
+        
+        for epoch in epoch_pbar:
             epoch_loss = 0
+            batch_count = 0
+            
             for batch_X, batch_y in dataloader:
                 # Forward pass
                 outputs = self.model(batch_X)
@@ -175,10 +215,26 @@ class LSTMForecaster:
                 optimizer.step()
                 
                 epoch_loss += loss.item()
+                batch_count += 1
             
-            if (epoch + 1) % 10 == 0:
-                avg_loss = epoch_loss / len(dataloader)
-                print(f"Epoch [{epoch+1}/{self.epochs}], Loss: {avg_loss:.4f}")
+            avg_loss = epoch_loss / batch_count
+            
+            # Update progress bar
+            epoch_pbar.set_postfix({
+                'loss': f'{avg_loss:.4f}',
+                'device': str(self.device).upper()
+            })
+            
+            # Estimate time
+            if epoch == 0:
+                elapsed = time.time() - start_time
+                estimated_total = elapsed * self.epochs
+                epoch_pbar.set_description(
+                    f'LSTM训练 (预计{estimated_total:.0f}秒)'
+                )
+        
+        total_time = time.time() - start_time
+        print(f"✓ LSTM训练完成，用时: {total_time:.1f}秒 ({total_time/60:.1f}分钟)")
         
         return self
     
