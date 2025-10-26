@@ -2,6 +2,18 @@
 LSTM model for time series forecasting
 Implements sequence-to-one LSTM for P and Q prediction
 """
+import os
+# Fix OpenMP threading issue that causes segfault with PyTorch 2.4.0
+# Must be set before importing torch
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
+# Set MPS fallback before importing torch to avoid segfaults
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.0'
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -9,6 +21,7 @@ from torch.utils.data import TensorDataset, DataLoader
 from typing import Optional, Tuple
 import platform
 import time
+import logging
 from tqdm import tqdm
 
 
@@ -18,25 +31,33 @@ def get_optimal_device():
     
     优先级:
     1. CUDA GPU (NVIDIA)
-    2. MPS (Apple Silicon Mac)
+    2. MPS (Apple Silicon Mac) - 如果未禁用
     3. CPU
     
     Returns:
         torch.device: 最优设备
     """
+    import os
+    
+    # 检查是否通过环境变量禁用 MPS
+    disable_mps = os.environ.get('DISABLE_MPS', '0') == '1'
+    
     if torch.cuda.is_available():
         device = torch.device('cuda')
-        print(f"✓ 使用 CUDA GPU: {torch.cuda.get_device_name(0)}")
-        print(f"  显存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
-    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        logging.info(f"✓ 使用 CUDA GPU: {torch.cuda.get_device_name(0)}")
+        logging.info(f"  显存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() and not disable_mps:
         device = torch.device('mps')
         system = platform.system()
         machine = platform.machine()
-        print(f"✓ 使用 Apple Metal (MPS) 加速")
-        print(f"  系统: {system} {machine}")
+        logging.info(f"✓ 使用 Apple Metal (MPS) 加速")
+        logging.info(f"  系统: {system} {machine}")
     else:
         device = torch.device('cpu')
-        print(f"⚠ 使用 CPU (建议使用GPU以加快训练)")
+        if disable_mps:
+            logging.info(f"ℹ 使用 CPU (MPS已被禁用)")
+        else:
+            logging.info(f"⚠ 使用 CPU (建议使用GPU以加快训练)")
     
     return device
 
@@ -132,10 +153,13 @@ class LSTMForecaster:
         self.learning_rate = learning_rate
         
         # Set device with auto-detection
-        if device is None:
-            self.device = get_optimal_device()
-        else:
-            self.device = torch.device(device)
+        # TEMPORARY: Force CPU to test if MPS is causing NaN issues
+        logging.info("🔧 临时强制使用 CPU 设备进行训练 (测试 MPS NaN 问题)")
+        self.device = torch.device('cpu')
+        # if device is None:
+        #     self.device = get_optimal_device()
+        # else:
+        #     self.device = torch.device(device)
         
         self.model = None
         self.scaler_mean_ = None
@@ -143,19 +167,77 @@ class LSTMForecaster:
     
     def _prepare_data(self, X, y=None):
         """Prepare data for PyTorch"""
+        logging.info(f"      准备数据: X shape={X.shape}, device={self.device}")
+        
+        # Check for NaN/Inf in input
+        if np.any(np.isnan(X)):
+            logging.error(f"      ❌ 输入X包含 {np.isnan(X).sum()} 个NaN值!")
+        if np.any(np.isinf(X)):
+            logging.error(f"      ❌ 输入X包含 {np.isinf(X).sum()} 个Inf值!")
+        
         # Normalize X
         if self.scaler_mean_ is None:
             # Fit scaler on training data
             # X shape: (n_samples, seq_len, n_features)
+            logging.info(f"      计算归一化参数...")
             self.scaler_mean_ = np.mean(X, axis=(0, 1))
             self.scaler_std_ = np.std(X, axis=(0, 1)) + 1e-8
+            
+            # Debug: print normalization params
+            logging.info(f"      归一化均值: {self.scaler_mean_}")
+            logging.info(f"      归一化标准差: {self.scaler_std_}")
+            
+            # Check for problematic values
+            if np.any(np.isnan(self.scaler_mean_)):
+                logging.error("      ❌ 均值包含NaN!")
+            if np.any(np.isnan(self.scaler_std_)):
+                logging.error("      ❌ 标准差包含NaN!")
+            if np.any(self.scaler_std_ < 1e-6):
+                logging.warning(f"      ⚠️  标准差过小: {self.scaler_std_[self.scaler_std_ < 1e-6]}")
         
+        logging.info(f"      应用归一化...")
         X_scaled = (X - self.scaler_mean_) / self.scaler_std_
         
-        X_tensor = torch.FloatTensor(X_scaled).to(self.device)
+        # Check scaled data
+        if np.any(np.isnan(X_scaled)):
+            logging.error(f"      ❌ 归一化后包含 {np.isnan(X_scaled).sum()} 个NaN值!")
+        if np.any(np.isinf(X_scaled)):
+            logging.error(f"      ❌ 归一化后包含 {np.isinf(X_scaled).sum()} 个Inf值!")
+        logging.info(f"      归一化后数据范围: [{np.min(X_scaled):.4f}, {np.max(X_scaled):.4f}]")
+        
+        logging.info(f"      转换为Tensor (保持在CPU)...")
+        # Use torch.from_numpy() with explicit copy and float32 conversion
+        # This is more stable than FloatTensor() with MPS
+        X_scaled_float32 = X_scaled.astype(np.float32)
+        X_tensor = torch.from_numpy(X_scaled_float32).clone()
+        
+        # Check tensor
+        if torch.isnan(X_tensor).any():
+            logging.error(f"      ❌ X Tensor包含 {torch.isnan(X_tensor).sum()} 个NaN值!")
+        if torch.isinf(X_tensor).any():
+            logging.error(f"      ❌ X Tensor包含 {torch.isinf(X_tensor).sum()} 个Inf值!")
+        logging.info(f"      X Tensor范围: [{X_tensor.min():.4f}, {X_tensor.max():.4f}]")
+        logging.info(f"      X Tensor创建完成 (CPU)")
         
         if y is not None:
-            y_tensor = torch.FloatTensor(y).to(self.device)
+            logging.info(f"      处理y数据: shape={y.shape}")
+            
+            # Check y for NaN/Inf
+            if np.any(np.isnan(y)):
+                logging.error(f"      ❌ 输入y包含 {np.isnan(y).sum()} 个NaN值!")
+            if np.any(np.isinf(y)):
+                logging.error(f"      ❌ 输入y包含 {np.isinf(y).sum()} 个Inf值!")
+            logging.info(f"      y数据范围: [{np.min(y):.4f}, {np.max(y):.4f}]")
+            
+            y_float32 = y.astype(np.float32)
+            y_tensor = torch.from_numpy(y_float32).clone()
+            
+            if torch.isnan(y_tensor).any():
+                logging.error(f"      ❌ y Tensor包含 {torch.isnan(y_tensor).sum()} 个NaN值!")
+            if torch.isinf(y_tensor).any():
+                logging.error(f"      ❌ y Tensor包含 {torch.isinf(y_tensor).sum()} 个Inf值!")
+            
+            logging.info(f"      y Tensor创建完成 (CPU)")
             return X_tensor, y_tensor
         else:
             return X_tensor
@@ -168,13 +250,17 @@ class LSTMForecaster:
             X: Input sequences of shape (n_samples, sequence_length, n_features)
             y: Target values of shape (n_samples, n_targets)
         """
+        
+        logging.info(f"      [1/6] 准备数据 (X shape: {X.shape}, y shape: {y.shape})...")
         # Prepare data
         X_tensor, y_tensor = self._prepare_data(X, y)
         
+        logging.info(f"      [2/6] 确定模型维度...")
         # Determine dimensions
         input_size = X.shape[2]
         output_size = y.shape[1] if len(y.shape) > 1 else 1
         
+        logging.info(f"      [3/6] 创建LSTM模型 (input={input_size}, hidden={self.hidden_size}, output={output_size})...")
         # Create model
         self.model = LSTMModel(
             input_size=input_size,
@@ -184,9 +270,14 @@ class LSTMForecaster:
             dropout=self.dropout
         ).to(self.device)
         
+        logging.info(f"      [4/6] 模型已创建并移至设备: {self.device}")
+        
         # Create dataset and dataloader
+        logging.info(f"      [5/6] 创建数据加载器 (batch_size={self.batch_size})...")
         dataset = TensorDataset(X_tensor, y_tensor)
         dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+        
+        logging.info(f"      数据加载器创建完成: {len(dataloader)} 个批次")
         
         # Loss and optimizer
         criterion = nn.MSELoss()
@@ -196,26 +287,72 @@ class LSTMForecaster:
         self.model.train()
         start_time = time.time()
         
+        logging.info(f"      [6/6] 开始训练 ({self.epochs} epochs, lr={self.learning_rate})...")
+        
         # Use tqdm for progress visualization
+        # file=sys.stdout ensures progress bar works with logging
+        import sys
         epoch_pbar = tqdm(range(self.epochs), desc='LSTM训练', unit='epoch', 
-                         ncols=100, colour='green')
+                         ncols=100, colour='green', leave=True, position=0, 
+                         file=sys.stdout, dynamic_ncols=True)
         
         for epoch in epoch_pbar:
             epoch_loss = 0
             batch_count = 0
             
-            for batch_X, batch_y in dataloader:
+            for batch_idx, (batch_X, batch_y) in enumerate(dataloader):
+                # Move batch to device (this is more efficient than moving all data at once)
+                batch_X = batch_X.to(self.device)
+                batch_y = batch_y.to(self.device)
+                
+                # Debug first batch
+                if epoch == 0 and batch_idx == 0:
+                    logging.info(f"      🔍 第一个批次调试:")
+                    logging.info(f"         batch_X shape: {batch_X.shape}")
+                    logging.info(f"         batch_X 范围: [{batch_X.min():.4f}, {batch_X.max():.4f}]")
+                    logging.info(f"         batch_X 是否有NaN: {torch.isnan(batch_X).any()}")
+                    logging.info(f"         batch_y shape: {batch_y.shape}")
+                    logging.info(f"         batch_y 范围: [{batch_y.min():.4f}, {batch_y.max():.4f}]")
+                    logging.info(f"         batch_y 是否有NaN: {torch.isnan(batch_y).any()}")
+                
                 # Forward pass
                 outputs = self.model(batch_X)
+                
+                # Debug first batch output
+                if epoch == 0 and batch_idx == 0:
+                    logging.info(f"         模型输出 shape: {outputs.shape}")
+                    logging.info(f"         模型输出 范围: [{outputs.min():.4f}, {outputs.max():.4f}]")
+                    logging.info(f"         模型输出 是否有NaN: {torch.isnan(outputs).any()}")
+                
                 loss = criterion(outputs, batch_y)
                 
-                # Backward pass
+                # Debug first batch loss
+                if epoch == 0 and batch_idx == 0:
+                    logging.info(f"         Loss值: {loss.item()}")
+                    logging.info(f"         Loss是否为NaN: {torch.isnan(loss)}")
+                
+                # Check for NaN loss
+                if torch.isnan(loss):
+                    if batch_idx < 3:  # Only log first 3 NaN warnings
+                        logging.warning(f"      NaN loss detected at epoch {epoch}, batch {batch_idx}")
+                    continue
+                
+                # Backward pass with gradient clipping
                 optimizer.zero_grad()
                 loss.backward()
+                
+                # Clip gradients to prevent explosion
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                
                 optimizer.step()
                 
                 epoch_loss += loss.item()
                 batch_count += 1
+            
+            # Check if any batches completed successfully
+            if batch_count == 0:
+                logging.error(f"Epoch {epoch}: All batches failed with NaN. Stopping training.")
+                break
             
             avg_loss = epoch_loss / batch_count
             
@@ -234,7 +371,7 @@ class LSTMForecaster:
                 )
         
         total_time = time.time() - start_time
-        print(f"✓ LSTM训练完成，用时: {total_time:.1f}秒 ({total_time/60:.1f}分钟)")
+        logging.info(f"      ✓ LSTM训练完成，用时: {total_time:.1f}秒 ({total_time/60:.1f}分钟)")
         
         return self
     
@@ -251,6 +388,9 @@ class LSTMForecaster:
         self.model.eval()
         
         X_tensor = self._prepare_data(X)
+        
+        # Move to device for prediction
+        X_tensor = X_tensor.to(self.device)
         
         with torch.no_grad():
             predictions = self.model(X_tensor)

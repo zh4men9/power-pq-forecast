@@ -170,37 +170,61 @@ def create_features(
 def prepare_sequences(
     df: pd.DataFrame,
     sequence_length: int = 24,
-    horizon: int = 1
+    horizon: int = 1,
+    exog_cols: List[str] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Prepare sequences for deep learning models (LSTM, Transformer)
     CRITICAL: Sequences only use past values for prediction
     
     Args:
-        df: DataFrame with P and Q columns
+        df: DataFrame with P, Q and optionally exogenous columns
         sequence_length: Length of input sequence
         horizon: Prediction horizon
+        exog_cols: List of exogenous column names to include (default: None)
     
     Returns:
         Tuple of (X sequences, Y targets)
-        X shape: (n_samples, sequence_length, 2)
-        Y shape: (n_samples, 2)
+        X shape: (n_samples, sequence_length, n_features)
+        Y shape: (n_samples, 2)  # Always predict P and Q
+    
+    Example:
+        Without exog: X shape (1000, 24, 2) - only P, Q
+        With exog: X shape (1000, 24, 7) - P, Q, + 5 exog vars
     """
-    data = df[['P', 'Q']].values
+    # Determine which columns to use for input sequences
+    input_cols = ['P', 'Q']
+    if exog_cols:
+        # Validate exog columns exist
+        available_exog = [col for col in exog_cols if col in df.columns]
+        if available_exog:
+            input_cols.extend(available_exog)
+            print(f"Using exogenous variables in sequences: {available_exog}")
+        else:
+            print(f"Warning: No exogenous columns found in df. Requested: {exog_cols}")
+    
+    # CRITICAL: Drop rows with NaN values before creating sequences
+    df_clean = df[input_cols + ['P', 'Q']].dropna()
+    if len(df_clean) < len(df):
+        print(f"Warning: Dropped {len(df) - len(df_clean)} rows with NaN values")
+    
+    data = df_clean[input_cols].values
     X_list = []
     Y_list = []
     
     for i in range(len(data) - sequence_length - horizon + 1):
         # Input sequence uses [i : i+sequence_length]
         X_list.append(data[i:i + sequence_length])
-        # Target is at [i + sequence_length + horizon - 1]
-        Y_list.append(data[i + sequence_length + horizon - 1])
+        # Target is ALWAYS only P and Q at [i + sequence_length + horizon - 1]
+        Y_list.append(df_clean[['P', 'Q']].values[i + sequence_length + horizon - 1])
     
     X = np.array(X_list)
     Y = np.array(Y_list)
     
     print(f"Prepared {len(X)} sequences:")
-    print(f"  X shape: {X.shape}")
-    print(f"  Y shape: {Y.shape}")
+    print(f"  X shape: {X.shape} (samples, sequence_length, features)")
+    print(f"  Y shape: {Y.shape} (samples, targets)")
+    print(f"  Input features: {input_cols}")
+    print(f"  Output targets: ['P', 'Q']")
     
     return X, Y

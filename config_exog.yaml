@@ -51,22 +51,22 @@ evaluation:
 models:
   # 朴素基线
   naive:
-    enabled: true
+    enabled: false
   
   # 季节朴素基线
   seasonal_naive:
-    enabled: true
+    enabled: false
   
   # 随机森林
   rf:
-    enabled: true
+    enabled: false
     n_estimators: 100
     max_depth: null
     n_jobs: -1
   
   # XGBoost
   xgb:
-    enabled: true
+    enabled: false
     n_estimators: 100
     max_depth: 6
     learning_rate: 0.1
@@ -79,7 +79,7 @@ models:
     num_layers: 2
     dropout: 0.2
     epochs: 50
-    batch_size: 32
+    batch_size: 8
     learning_rate: 0.001
   
   # Transformer
@@ -92,7 +92,7 @@ models:
     dim_feedforward: 256
     dropout: 0.1
     epochs: 50
-    batch_size: 32
+    batch_size: 8
     learning_rate: 0.001
 
 # 图形配置

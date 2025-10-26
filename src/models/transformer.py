@@ -2,6 +2,18 @@
 Transformer model for time series forecasting
 Implements basic Transformer with positional encoding for P and Q prediction
 """
+import os
+# Fix OpenMP threading issue that causes segfault with PyTorch 2.4.0
+# Must be set before importing torch
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
+# Set MPS fallback before importing torch to avoid segfaults
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.0'
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -10,7 +22,9 @@ import math
 from typing import Optional
 import platform
 import time
+import logging
 from tqdm import tqdm
+import sys
 
 
 def get_optimal_device():
@@ -19,25 +33,33 @@ def get_optimal_device():
     
     优先级:
     1. CUDA GPU (NVIDIA)
-    2. MPS (Apple Silicon Mac)
+    2. MPS (Apple Silicon Mac) - 如果未禁用
     3. CPU
     
     Returns:
         torch.device: 最优设备
     """
+    import os
+    
+    # 检查是否通过环境变量禁用 MPS
+    disable_mps = os.environ.get('DISABLE_MPS', '0') == '1'
+    
     if torch.cuda.is_available():
         device = torch.device('cuda')
-        print(f"✓ 使用 CUDA GPU: {torch.cuda.get_device_name(0)}")
-        print(f"  显存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
-    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        logging.info(f"✓ 使用 CUDA GPU: {torch.cuda.get_device_name(0)}")
+        logging.info(f"  显存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available() and not disable_mps:
         device = torch.device('mps')
         system = platform.system()
         machine = platform.machine()
-        print(f"✓ 使用 Apple Metal (MPS) 加速")
-        print(f"  系统: {system} {machine}")
+        logging.info(f"✓ 使用 Apple Metal (MPS) 加速")
+        logging.info(f"  系统: {system} {machine}")
     else:
         device = torch.device('cpu')
-        print(f"⚠ 使用 CPU (建议使用GPU以加快训练)")
+        if disable_mps:
+            logging.info(f"ℹ 使用 CPU (MPS已被禁用)")
+        else:
+            logging.info(f"⚠ 使用 CPU (建议使用GPU以加快训练)")
     
     return device
 
@@ -203,10 +225,13 @@ class TransformerForecaster:
         self.learning_rate = learning_rate
         
         # Set device with auto-detection
-        if device is None:
-            self.device = get_optimal_device()
-        else:
-            self.device = torch.device(device)
+        # TEMPORARY: Force CPU to test if MPS is causing NaN issues
+        logging.info("🔧 临时强制使用 CPU 设备进行训练 (测试 MPS NaN 问题)")
+        self.device = torch.device('cpu')
+        # if device is None:
+        #     self.device = get_optimal_device()
+        # else:
+        #     self.device = torch.device(device)
         
         self.model = None
         self.scaler_mean_ = None
@@ -214,17 +239,29 @@ class TransformerForecaster:
     
     def _prepare_data(self, X, y=None):
         """Prepare data for PyTorch"""
+        logging.info(f"      准备数据: X shape={X.shape}, device={self.device}")
+        
         # Normalize X
         if self.scaler_mean_ is None:
+            logging.info(f"      计算归一化参数...")
             self.scaler_mean_ = np.mean(X, axis=(0, 1))
             self.scaler_std_ = np.std(X, axis=(0, 1)) + 1e-8
         
+        logging.info(f"      应用归一化...")
         X_scaled = (X - self.scaler_mean_) / self.scaler_std_
         
-        X_tensor = torch.FloatTensor(X_scaled).to(self.device)
+        logging.info(f"      转换为Tensor (保持在CPU)...")
+        # Use torch.from_numpy() with explicit copy and float32 conversion
+        # This is more stable than FloatTensor() with MPS
+        X_scaled_float32 = X_scaled.astype(np.float32)
+        X_tensor = torch.from_numpy(X_scaled_float32).clone()
+        logging.info(f"      X Tensor创建完成 (CPU)")
         
         if y is not None:
-            y_tensor = torch.FloatTensor(y).to(self.device)
+            logging.info(f"      处理y数据: shape={y.shape}")
+            y_float32 = y.astype(np.float32)
+            y_tensor = torch.from_numpy(y_float32).clone()
+            logging.info(f"      y Tensor创建完成 (CPU)")
             return X_tensor, y_tensor
         else:
             return X_tensor
@@ -256,9 +293,14 @@ class TransformerForecaster:
             output_size=output_size
         ).to(self.device)
         
+        logging.info(f"      模型已创建并移至设备: {self.device}")
+        logging.info(f"      模型参数设备: {next(self.model.parameters()).device}")
+        
         # Create dataset and dataloader
         dataset = TensorDataset(X_tensor, y_tensor)
         dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+        
+        logging.info(f"      数据加载器创建完成: {len(dataloader)} 个批次")
         
         # Loss and optimizer
         criterion = nn.MSELoss()
@@ -268,26 +310,48 @@ class TransformerForecaster:
         self.model.train()
         start_time = time.time()
         
+        logging.info(f"      开始训练 Transformer ({self.epochs} epochs, lr={self.learning_rate})...")
+        
         # Use tqdm for progress visualization
+        # file=sys.stdout ensures progress bar works with logging
         epoch_pbar = tqdm(range(self.epochs), desc='Transformer训练', unit='epoch',
-                         ncols=100, colour='blue')
+                         ncols=100, colour='blue', leave=True, position=0,
+                         file=sys.stdout, dynamic_ncols=True)
         
         for epoch in epoch_pbar:
             epoch_loss = 0
             batch_count = 0
             
             for batch_X, batch_y in dataloader:
+                # Move batch to device (this is more efficient than moving all data at once)
+                batch_X = batch_X.to(self.device)
+                batch_y = batch_y.to(self.device)
+                
                 # Forward pass
                 outputs = self.model(batch_X)
                 loss = criterion(outputs, batch_y)
                 
-                # Backward pass
+                # Check for NaN loss
+                if torch.isnan(loss):
+                    logging.warning(f"      NaN loss detected at epoch {epoch}, batch {batch_count}")
+                    continue
+                
+                # Backward pass with gradient clipping
                 optimizer.zero_grad()
                 loss.backward()
+                
+                # Clip gradients to prevent explosion
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                
                 optimizer.step()
                 
                 epoch_loss += loss.item()
                 batch_count += 1
+            
+            # Check if any batches completed successfully
+            if batch_count == 0:
+                logging.error(f"Epoch {epoch}: All batches failed with NaN. Stopping training.")
+                break
             
             avg_loss = epoch_loss / batch_count
             
@@ -306,7 +370,7 @@ class TransformerForecaster:
                 )
         
         total_time = time.time() - start_time
-        print(f"✓ Transformer训练完成，用时: {total_time:.1f}秒 ({total_time/60:.1f}分钟)")
+        logging.info(f"✓ Transformer训练完成，用时: {total_time:.1f}秒 ({total_time/60:.1f}分钟)")
         
         return self
     
@@ -323,6 +387,9 @@ class TransformerForecaster:
         self.model.eval()
         
         X_tensor = self._prepare_data(X)
+        
+        # Move to device for prediction
+        X_tensor = X_tensor.to(self.device)
         
         with torch.no_grad():
             predictions = self.model(X_tensor)
