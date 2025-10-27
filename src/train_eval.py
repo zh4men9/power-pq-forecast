@@ -794,7 +794,259 @@ def train_evaluate_deep_models(
     return results
 
 
-def run_evaluation(config: Config, df: pd.DataFrame, metrics_dir: str = "outputs/metrics") -> tuple:
+def load_and_evaluate_deep_models(
+    df: pd.DataFrame,
+    horizons: List[int],
+    cv_splitter: TimeSeriesSplit,
+    config: Config,
+    load_models_dir: str
+) -> Tuple[List[Dict], Dict]:
+    """
+    Load pre-trained deep learning models and evaluate them
+    
+    Args:
+        df: DataFrame with P, Q and optionally exogenous columns
+        horizons: List of forecast horizons to evaluate
+        cv_splitter: Cross-validation splitter
+        config: Configuration object
+        load_models_dir: Directory containing saved model files
+    
+    Returns:
+        Tuple of (results list, loaded models dict)
+    """
+    import pickle
+    import torch
+    from pathlib import Path
+    
+    results = []
+    loaded_models = {}
+    
+    models_path = Path(load_models_dir)
+    if not models_path.exists():
+        logging.error(f"❌ 模型目录不存在: {load_models_dir}")
+        return results, loaded_models
+    
+    # Get target columns to predict
+    target_cols = get_target_columns(config)
+    sequence_length = config.get('features', 'sequence_length', default=24)
+    exog_cols = config.get('features', 'exog_cols', default=[])
+    n_targets = len(target_cols)
+    n_horizons = len(horizons)
+    
+    logging.info(f"模型加载配置:")
+    logging.info(f"  预测目标: {target_cols} ({n_targets} 个)")
+    logging.info(f"  预测步长: {horizons}")
+    logging.info(f"  序列长度: {sequence_length}")
+    
+    # Prepare data (same as training)
+    max_horizon = max(horizons)
+    X_seq, _ = prepare_sequences(df, sequence_length=sequence_length, 
+                                 horizon=max_horizon, exog_cols=exog_cols,
+                                 target_cols=target_cols)
+    
+    Y_all_horizons = []
+    for horizon in horizons:
+        _, Y_h_full = prepare_sequences(df, sequence_length=sequence_length, 
+                                       horizon=horizon, exog_cols=exog_cols,
+                                       target_cols=target_cols)
+        if len(Y_h_full) > len(X_seq):
+            Y_h = Y_h_full[-len(X_seq):]
+        elif len(Y_h_full) < len(X_seq):
+            X_seq = X_seq[:len(Y_h_full)]
+            Y_h = Y_h_full
+        else:
+            Y_h = Y_h_full
+        Y_all_horizons.append(Y_h)
+    
+    # Truncate to min length if necessary
+    y_lengths = [len(y) for y in Y_all_horizons]
+    if len(set(y_lengths)) > 1:
+        min_len = min(y_lengths)
+        Y_all_horizons = [y[:min_len] for y in Y_all_horizons]
+        X_seq = X_seq[:min_len]
+    
+    Y_seq = np.hstack(Y_all_horizons)
+    
+    logging.info(f"  数据准备完成: X={X_seq.shape}, Y={Y_seq.shape}")
+    
+    # Try to load LSTM model
+    lstm_file = models_path / "LSTM_h1.pkl"
+    if lstm_file.exists() and config.get('models', 'lstm', 'enabled', default=False):
+        try:
+            logging.info(f"\n加载 LSTM 模型: {lstm_file}")
+            save_dict = torch.load(lstm_file, map_location='cpu')
+            
+            # Reconstruct LSTM model
+            device_type = config.get('device', 'type', default='cpu')
+            lstm_params = config.get('models', 'lstm', default={})
+            
+            # Create LSTMForecaster wrapper
+            lstm_forecaster = LSTMForecaster(
+                hidden_size=lstm_params.get('hidden_size', 64),
+                num_layers=lstm_params.get('num_layers', 2),
+                dropout=lstm_params.get('dropout', 0.2),
+                epochs=1,  # Not used for inference
+                batch_size=lstm_params.get('batch_size', 32),
+                learning_rate=lstm_params.get('learning_rate', 0.001),
+                device=device_type,
+                n_horizons=n_horizons
+            )
+            
+            # Create the actual LSTM model with correct dimensions
+            from src.models.lstm import LSTMModel
+            input_size = X_seq.shape[2]  # Number of features
+            output_size = n_targets  # Number of targets per horizon
+            
+            lstm_forecaster.model = LSTMModel(
+                input_size=input_size,
+                hidden_size=lstm_params.get('hidden_size', 64),
+                num_layers=lstm_params.get('num_layers', 2),
+                output_size=output_size,
+                dropout=lstm_params.get('dropout', 0.2),
+                n_horizons=n_horizons
+            )
+            
+            # Load model weights
+            if 'model_state_dict' in save_dict:
+                lstm_forecaster.model.load_state_dict(save_dict['model_state_dict'])
+                lstm_forecaster.model.to(lstm_forecaster.device)
+                lstm_forecaster.model.eval()
+                
+                # Set scaler parameters (compute from data)
+                lstm_forecaster.scaler_mean_ = np.mean(X_seq, axis=(0, 1))
+                lstm_forecaster.scaler_std_ = np.std(X_seq, axis=(0, 1)) + 1e-8
+                
+                loaded_models['LSTM_h1'] = lstm_forecaster
+                logging.info(f"  ✓ LSTM 模型加载成功")
+            else:
+                logging.error(f"  ❌ LSTM 模型文件格式不正确")
+        except Exception as e:
+            logging.error(f"  ❌ LSTM 模型加载失败: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+    
+    # Try to load Transformer model
+    transformer_file = models_path / "Transformer_h1.pkl"
+    if transformer_file.exists() and config.get('models', 'transformer', 'enabled', default=False):
+        try:
+            logging.info(f"\n加载 Transformer 模型: {transformer_file}")
+            save_dict = torch.load(transformer_file, map_location='cpu')
+            
+            # Reconstruct Transformer model
+            device_type = config.get('device', 'type', default='cpu')
+            trans_params = config.get('models', 'transformer', default={})
+            
+            # Create TransformerForecaster wrapper
+            transformer_forecaster = TransformerForecaster(
+                d_model=trans_params.get('d_model', 64),
+                nhead=trans_params.get('nhead', 4),
+                num_encoder_layers=trans_params.get('num_encoder_layers', 2),
+                num_decoder_layers=trans_params.get('num_decoder_layers', 2),
+                dim_feedforward=trans_params.get('dim_feedforward', 256),
+                dropout=trans_params.get('dropout', 0.1),
+                epochs=1,  # Not used for inference
+                batch_size=trans_params.get('batch_size', 32),
+                learning_rate=trans_params.get('learning_rate', 0.001),
+                device=device_type,
+                n_horizons=n_horizons
+            )
+            
+            # Create the actual Transformer model with correct dimensions
+            from src.models.transformer import TransformerModel
+            input_size = X_seq.shape[2]  # Number of features
+            output_size = n_targets  # Number of targets per horizon
+            
+            transformer_forecaster.model = TransformerModel(
+                input_size=input_size,
+                d_model=trans_params.get('d_model', 64),
+                nhead=trans_params.get('nhead', 4),
+                num_encoder_layers=trans_params.get('num_encoder_layers', 2),
+                num_decoder_layers=trans_params.get('num_decoder_layers', 2),
+                dim_feedforward=trans_params.get('dim_feedforward', 256),
+                output_size=output_size,
+                dropout=trans_params.get('dropout', 0.1),
+                n_horizons=n_horizons
+            )
+            
+            # Load model weights
+            if 'model_state_dict' in save_dict:
+                transformer_forecaster.model.load_state_dict(save_dict['model_state_dict'])
+                transformer_forecaster.model.to(transformer_forecaster.device)
+                transformer_forecaster.model.eval()
+                
+                # Set scaler parameters (compute from data)
+                transformer_forecaster.scaler_mean_ = np.mean(X_seq, axis=(0, 1))
+                transformer_forecaster.scaler_std_ = np.std(X_seq, axis=(0, 1)) + 1e-8
+                
+                loaded_models['Transformer_h1'] = transformer_forecaster
+                logging.info(f"  ✓ Transformer 模型加载成功")
+            else:
+                logging.error(f"  ❌ Transformer 模型文件格式不正确")
+        except Exception as e:
+            logging.error(f"  ❌ Transformer 模型加载失败: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+    
+    if not loaded_models:
+        logging.warning("⚠️  未加载任何深度学习模型")
+        return results, loaded_models
+    
+    logging.info(f"\n✓ 成功加载 {len(loaded_models)} 个模型: {list(loaded_models.keys())}")
+    
+    # Evaluate loaded models on each fold
+    from tqdm import tqdm
+    
+    for fold_idx, (train_idx, test_idx) in enumerate(cv_splitter.split(X_seq)):
+        logging.info(f"\n📊 Fold {fold_idx + 1}/{cv_splitter.n_splits}")
+        
+        X_test = X_seq[test_idx]
+        Y_test = Y_seq[test_idx]
+        
+        logging.info(f"  测试集: {len(X_test)} 样本")
+        
+        # Evaluate each loaded model
+        for model_name, model in loaded_models.items():
+            logging.info(f"  评估 {model_name}...")
+            
+            try:
+                # Make predictions
+                Y_pred = model.predict(X_test)
+                
+                # Evaluate each horizon
+                for h_idx, horizon in enumerate(horizons):
+                    pred_start = h_idx * n_targets
+                    pred_end = pred_start + n_targets
+                    
+                    Y_test_h = Y_test[:, pred_start:pred_end]
+                    Y_pred_h = Y_pred[:, pred_start:pred_end]
+                    
+                    # Evaluate each target
+                    for t_idx, target in enumerate(target_cols):
+                        y_true = Y_test_h[:, t_idx]
+                        y_pred = Y_pred_h[:, t_idx]
+                        
+                        metrics = eval_metrics(y_true, y_pred)
+                        
+                        results.append({
+                            'fold': fold_idx,
+                            'horizon': horizon,
+                            'model': model_name.replace('_h1', ''),  # Remove suffix for display
+                            'target': target,
+                            **metrics
+                        })
+                
+                logging.info(f"    ✓ {model_name} 评估完成")
+            
+            except Exception as e:
+                logging.error(f"    ❌ {model_name} 评估失败: {e}")
+                import traceback
+                logging.error(traceback.format_exc())
+    
+    return results, loaded_models
+
+
+def run_evaluation(config: Config, df: pd.DataFrame, metrics_dir: str = "outputs/metrics", 
+                  load_models_dir: str = None) -> tuple:
     """
     Run full evaluation pipeline
     
@@ -802,6 +1054,7 @@ def run_evaluation(config: Config, df: pd.DataFrame, metrics_dir: str = "outputs
         config: Configuration object
         df: DataFrame with features
         metrics_dir: Directory to save evaluation metrics
+        load_models_dir: Directory to load pre-trained LSTM and Transformer models (optional)
     
     Returns:
         Tuple of (results_df, trained_models)
@@ -828,13 +1081,25 @@ def run_evaluation(config: Config, df: pd.DataFrame, metrics_dir: str = "outputs
     cv_splitter = TimeSeriesSplit(test_window=test_window, n_splits=n_splits)
     
     logging.info(f"\n{'='*60}")
-    logging.info(f"步骤 3.1: 训练深度学习模型 (一次性训练，所有步长共享)")
+    logging.info(f"步骤 3.1: 深度学习模型处理 (一次性训练/加载，所有步长共享)")
     logging.info(f"{'='*60}")
-    logging.info(f"🔧 训练深度学习模型 (将在所有{len(horizons)}个预测步长上评估)...")
-    deep_results, deep_models_trained = train_evaluate_deep_models_once(
-        df, horizons, cv_splitter, config
-    )
-    logging.info(f"✓ 深度学习模型训练完成")
+    
+    if load_models_dir:
+        # Load pre-trained deep learning models
+        logging.info(f"� 从以下目录加载已训练的深度学习模型:")
+        logging.info(f"   {load_models_dir}")
+        deep_results, deep_models_trained = load_and_evaluate_deep_models(
+            df, horizons, cv_splitter, config, load_models_dir
+        )
+        logging.info(f"✓ 深度学习模型加载并评估完成")
+    else:
+        # Train deep learning models from scratch
+        logging.info(f"�🔧 训练深度学习模型 (将在所有{len(horizons)}个预测步长上评估)...")
+        deep_results, deep_models_trained = train_evaluate_deep_models_once(
+            df, horizons, cv_splitter, config
+        )
+        logging.info(f"✓ 深度学习模型训练完成")
+    
     logging.info("")
     
     # For each horizon: evaluate baseline and tree models

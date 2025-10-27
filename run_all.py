@@ -64,7 +64,7 @@ def setup_logging(output_dir: Path):
     return str(log_file)
 
 
-def run_single_strategy(config, data_file, output_dir, config_backup_path, imputation_strategy=None):
+def run_single_strategy(config, data_file, output_dir, config_backup_path, imputation_strategy=None, load_models_dir=None):
     """
     运行单个填充策略的完整流程
     
@@ -74,6 +74,7 @@ def run_single_strategy(config, data_file, output_dir, config_backup_path, imput
         output_dir: 输出目录
         config_backup_path: 备份的配置文件路径
         imputation_strategy: 填充策略名称 (None表示使用配置中的method)
+        load_models_dir: 已训练模型目录路径，用于加载LSTM和Transformer模型
     
     Returns:
         Tuple of (results_df, forecast_df, figures_dir)
@@ -114,8 +115,18 @@ def run_single_strategy(config, data_file, output_dir, config_backup_path, imput
     logging.info("步骤 3/7: 模型训练与评估")
     logging.info("="*60)
     
+    # 如果指定了模型加载目录，显示信息
+    if load_models_dir:
+        logging.info(f"🔄 将从以下目录加载已训练的LSTM和Transformer模型:")
+        logging.info(f"   {load_models_dir}")
+        logging.info("")
+    
     metrics_dir = output_dir / f'metrics{strategy_suffix}'
-    results_df, trained_models = run_evaluation(config, df, metrics_dir=str(metrics_dir))
+    results_df, trained_models = run_evaluation(
+        config, df, 
+        metrics_dir=str(metrics_dir),
+        load_models_dir=load_models_dir
+    )
     logging.info("")
     
     # Save trained models
@@ -170,6 +181,13 @@ def run_single_strategy(config, data_file, output_dir, config_backup_path, imput
         elif f"{best_model_name}_all_horizons" in trained_models:
             model_key = f"{best_model_name}_all_horizons"
             logging.info(f"  找到模型: {model_key}")
+        else:
+            # 尝试查找 ModelName_h1 格式
+            for key in trained_models.keys():
+                if key.startswith(best_model_name):
+                    model_key = key
+                    logging.info(f"  找到模型: {model_key}")
+                    break
         
         if model_key:
             forecast_df = make_future_forecast(
@@ -229,6 +247,8 @@ def main():
     parser = argparse.ArgumentParser(description='电力质量预测项目 - 一键运行脚本')
     parser.add_argument('--config', type=str, default='config_p_only.yaml',
                        help='配置文件路径 (默认: config_exog.yaml)')
+    parser.add_argument('--load-models', type=str, default=None,
+                       help='已训练模型目录路径，用于加载LSTM和Transformer模型 (例如: outputs/output-2025-10-27-0952/models_nearest_p)')
     args = parser.parse_args()
     
     # Create timestamped output directory
@@ -307,7 +327,8 @@ def main():
             try:
                 results_df, forecast_df, figures_dir = run_single_strategy(
                     config, data_file, output_dir, config_backup_path, 
-                    imputation_strategy=strategy
+                    imputation_strategy=strategy,
+                    load_models_dir=args.load_models
                 )
                 
                 # Generate Word report for this strategy
@@ -347,7 +368,8 @@ def main():
         
         results_df, forecast_df, figures_dir = run_single_strategy(
             config, data_file, output_dir, config_backup_path, 
-            imputation_strategy=None
+            imputation_strategy=None,
+            load_models_dir=args.load_models
         )
         
         # Generate report
