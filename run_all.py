@@ -13,7 +13,7 @@ from src.config import load_config
 from src.data_io import load_data, generate_diagnostic_plots
 from src.train_eval import run_evaluation
 from src.plots import plot_error_by_horizon, plot_all_metrics_by_horizon, configure_chinese_fonts
-
+from src.seed import set_random_seed, get_seed_from_config
 from src.report_docx import generate_word_report
 from src.model_manager import save_model, get_best_model_info, make_future_forecast
 import pandas as pd
@@ -247,6 +247,11 @@ def main():
     config = load_config(args.config)
     logging.info(f"配置文件加载成功: {args.config}")
     logging.info(f"输出目录: {output_dir}")
+    
+    # 设置随机种子（如果配置中启用）
+    seed = get_seed_from_config(config)
+    if seed is not None:
+        set_random_seed(seed)
     
     # Copy configuration file to output directory
     config_backup_path = output_dir / 'config_used.yaml'

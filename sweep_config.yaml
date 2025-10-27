@@ -11,7 +11,7 @@ metric:
 early_terminate:
   type: hyperband
   min_iter: 50  # 至少训练50轮
-  max_iter: 500
+  max_iter: 250
   s: 2
   eta: 3
 
@@ -54,7 +54,7 @@ parameters:
     values: [8, 16, 32, 48, 64, 96]  # 批次大小 - 新增8,96边界值
   
   epochs:
-    values: [100, 150, 200, 250, 300, 400, 500]  # 训练轮数 - 新增100小值快速测试
+    values: [100, 150, 200, 250]  # 训练轮数 - 新增100小值快速测试
   
   # ========== 特征工程参数 ==========
   sequence_length:

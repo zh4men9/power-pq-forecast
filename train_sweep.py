@@ -18,6 +18,7 @@ from src.features import prepare_sequences
 from src.models.transformer import TransformerForecaster
 from src.cv import rolling_origin_split
 from src.metrics import eval_metrics
+from src.seed import set_random_seed, get_seed_from_config
 import numpy as np
 import logging
 
@@ -28,6 +29,9 @@ def train():
     # 1. 初始化wandb
     run = wandb.init()
     config = wandb.config
+    
+    # 设置随机种子（使用固定值保证可复现）
+    set_random_seed(42)
     
     # 2. 设置日志
     logging.basicConfig(
