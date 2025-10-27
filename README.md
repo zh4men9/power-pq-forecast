@@ -54,6 +54,131 @@
 
 ## 🎉 最新改进
 
+### 2025年10月27日 - V3.0 重大更新
+
+#### 🎯 1. W&B Sweep超参数优化系统
+
+**新增功能**：集成Weights & Biases进行Transformer模型的自动超参数优化
+
+**核心特性**：
+- ✅ **贝叶斯优化**：智能搜索最佳参数组合(比随机搜索快3-5倍)
+- ✅ **Hyperband早停**：自动终止表现不佳的实验,节省计算资源
+- ✅ **实时监控**：Web界面实时查看训练进度和指标变化
+- ✅ **一键启动**：`python start_sweep.py` 全自动运行
+
+**优化参数空间**：
+- 模型架构: d_model[64-320], nhead[4-16], layers[2-8]
+- 训练策略: batch_size[8-96], lr[1e-5,1e-3], epochs[100-500]
+- 特征工程: sequence_length[24-168], max_lag[24-168]
+- **搜索空间**: 约800万种组合
+
+**最佳结果**：
+- **ACC_10 = 89%** (10%阈值准确率)
+- 配置: d_model=256, nhead=16, encoder=4层, decoder=6层
+- 训练参数: batch=64, lr=0.000129, dropout=0.123
+
+**使用方法**：
+```bash
+# 1. 创建sweep
+python start_sweep.py
+# 选择模式: 1=快速测试(10次) 2=标准(30次) 3=深度(50次) 4=彻夜运行
+
+# 2. 查看结果
+wandb 控制台: https://wandb.ai/your-username/transformer-tuning
+
+# 3. 应用最佳参数
+# 系统自动在 config_p_only_newdata-transformer89.yaml 中应用
+```
+
+**技术亮点**：
+- 自动处理 d_model/nhead 整除约束
+- 支持断点续训(sweep ID可复用)
+- 完整错误处理和日志记录
+- 支持后台运行(nohup模式)
+
+---
+
+#### 🔢 2. 随机种子管理系统
+
+**新增功能**：全局随机种子配置,确保实验结果100%可复现
+
+**配置方式**：
+```yaml
+# config.yaml 新增配置段
+random_seed:
+  enabled: true    # 启用随机种子
+  seed: 42         # 固定种子值(可选: 任意整数)
+```
+
+**控制范围**：
+- ✅ Python内置随机数 (`random.seed()`)
+- ✅ NumPy随机数 (`np.random.seed()`)
+- ✅ PyTorch随机数 (`torch.manual_seed()`)
+- ✅ CUDA随机数 (`torch.cuda.manual_seed_all()`)
+- ✅ 环境变量 (`PYTHONHASHSEED`)
+
+**使用场景**：
+1. **科研论文**：保证实验可复现
+2. **模型对比**：公平比较不同模型(相同随机初始化)
+3. **调试开发**：固定随机性,便于调试
+4. **生产部署**：设为None启用随机性,增强泛化
+
+**验证测试**：
+```bash
+python test_random_seed.py
+# 输出:
+# ✅ 随机种子设置成功！两次结果完全一致
+# ✅ PyTorch随机种子设置成功！
+```
+
+**代码实现**：
+- 新增: `src/seed.py` 统一种子管理
+- 集成: `run_all.py` 自动读取配置并设置
+- 集成: `train_sweep.py` sweep实验中固定种子
+
+---
+
+#### 📊 3. 最佳参数配置模板
+
+**新增文件**：`config_p_only_newdata-transformer89.yaml`
+
+**特点**：
+- ✅ 使用W&B Sweep找到的最佳Transformer参数(ACC_10=89%)
+- ✅ LSTM参数调整为与Transformer相似性能
+- ✅ 随机种子配置示例
+- ✅ 完整的注释说明
+
+**Transformer最佳配置**：
+```yaml
+transformer:
+  d_model: 256                      # 最佳模型维度
+  nhead: 16                         # 16个注意力头
+  num_encoder_layers: 4             # 4层编码器
+  num_decoder_layers: 6             # 6层解码器
+  dim_feedforward: 128              # FFN维度
+  dropout: 0.12344460274517984      # 精确dropout值
+  epochs: 500                       # 充分训练
+  batch_size: 64                    # 最优批次大小
+  learning_rate: 0.0001290786682817798  # 精确学习率
+```
+
+**特征工程配置**：
+```yaml
+features:
+  max_lag: 168        # 1周历史(最佳)
+  sequence_length: 24  # 24小时输入序列
+  
+evaluation:
+  test_window: 200    # 200小时测试窗口
+```
+
+**使用方法**：
+```bash
+python run_all.py --config config_p_only_newdata-transformer89.yaml
+```
+
+---
+
 ### 2025年10月26日 - 重大更新 V2.0
 
 #### 🚀 1. 深度学习训练效率优化
