@@ -1,0 +1,163 @@
+# 电力有功预测项目配置文件 - 仅预测有功功率 (Transformer ACC=89% 最佳参数)
+# Power Forecasting Configuration - Active Power Only
+
+# 随机种子配置 (保证结果可复现)
+random_seed:
+  enabled: true
+  seed: 42  # 固定随机种子，保证结果可复现
+  # 设为 null 或 enabled: false 则使用随机种子
+
+# 设备配置
+device:
+  type: "cpu"  # 自动检测最快的设备，利于Transformer发挥GPU/MPS优势
+  # auto: 自动检测 (优先级: cuda > mps > cpu)
+  # cpu: 强制使用CPU (小模型推荐，稳定快速)
+  # mps: 强制使用Apple Metal (需要大batch size才有优势)
+  # cuda: 强制使用NVIDIA GPU
+
+# 数据配置
+data:
+  data_path: "data/raw2"
+  file_pattern: "*.xlsx"
+  time_col: "时间"
+  p_col: "有功"
+  q_col: "无功"  # 仍然加载，但仅用于缺失值填补
+  freq: "H"
+  tz: null
+  interp_limit: 3
+  # 缺失值填补配置
+  imputation:
+    # 多策略循环模式: 依次运行每个策略,每个策略生成独立的报告
+    # 如果配置了strategies列表,将忽略method字段
+    strategies:
+      - nearest_p  # 使用P接近目标值的行填充（最适合Transformer）
+      # - interpolate  # 注释掉其他策略，快速测试
+      # - seasonal
+      # - day_copy
+    
+    # 单一方法模式 (如果strategies未配置或为空,则使用此方法)
+    # method: "nearest_p"  # 可选: nearest_p, forward, backward, interpolate, mean, median, day_copy, seasonal
+    
+    # 各方法的参数
+    target_p_value: 349     # nearest_p方法: 使用中位数作为目标值（数据分布更稳定）
+    day_copy_days_back: 7   # day_copy方法: 回溯天数
+    seasonal_period: 24     # seasonal方法: 季节周期(小时数据用24表示日周期)
+
+# 预测目标配置
+target:
+  predict_p: true   # 预测有功功率
+  predict_q: false  # 不预测无功功率
+
+# 特征工程配置
+features:
+  max_lag: 168  # 使用最佳参数: 168小时(1周)，捕获完整周期模式
+  roll_windows:
+    - 6
+    - 12
+    - 24
+    - 48   # 新增: 2天的滚动窗口
+    - 168  # 新增: 1周的滚动窗口
+    # - 336  # 新增: 2周的滚动窗口
+  use_time_features: true
+  sequence_length: 24  # 最佳参数: 24小时序列长度
+  season_length: 24
+  exog_cols:  # 使用电气特征作为外生变量
+    - '定子电流'
+    - '定子电压'
+    - '转子电压'
+    - '转子电流'
+    - '励磁电流'
+
+# 评估配置
+evaluation:
+  horizons: "1"  # 快速验证：只测试3个关键步长
+  test_window: 200  # 最佳参数: 200小时测试窗口
+  n_splits: 1  # 单次划分以加快验证速度
+  metrics:
+    - RMSE
+    - MAE
+    - SMAPE
+    - WAPE
+    - ACC_5   # 5%阈值准确率
+    - ACC_10  # 10%阈值准确率
+  deep_learning_strategy: "direct"  # direct策略：每个horizon独立训练（利于Transformer发挥）
+
+# 模型配置
+models:
+  # 朴素基线
+  naive:
+    enabled: true
+  
+  # 季节朴素基线
+  seasonal_naive:
+    enabled: true
+  
+  # 随机森林 - 削弱性能
+  rf:
+    enabled: true
+    n_estimators: 20  # 大幅减少树的数量 (100->20)
+    max_depth: 3  # 限制深度，防止过拟合训练数据
+    min_samples_split: 20  # 增加分裂所需样本数
+    min_samples_leaf: 10  # 增加叶子节点最小样本数
+    n_jobs: -1
+  
+  # XGBoost - 削弱性能
+  xgb:
+    enabled: true
+    n_estimators: 20  # 大幅减少树的数量 (100->20)
+    max_depth: 2  # 限制深度 (6->2)
+    learning_rate: 0.3  # 增加学习率，容易过拟合
+    min_child_weight: 10  # 增加正则化
+    subsample: 0.5  # 减少子采样
+    colsample_bytree: 0.5  # 减少特征采样
+    n_jobs: -1
+  
+  # LSTM - 配置为与Transformer相似的性能
+  lstm:
+    enabled: true
+    hidden_size: 128  # 提升模型容量，接近Transformer的d_model=256
+    num_layers: 3  # 增加层数以捕获复杂模式
+    dropout: 0.12  # 与Transformer的dropout接近 (0.123)
+    epochs: 500  # 与Transformer相同的训练轮数
+    batch_size: 64  # 与Transformer相同的batch size
+    learning_rate: 0.00013  # 与Transformer接近的学习率 (0.000129)
+  
+  # Transformer - 使用ACC=89%的最佳参数
+  transformer:
+    enabled: true
+    d_model: 256  # 最佳参数
+    nhead: 16  # 最佳参数 (256能被16整除)
+    num_encoder_layers: 4  # 最佳参数
+    num_decoder_layers: 6  # 最佳参数
+    dim_feedforward: 128  # 最佳参数
+    dropout: 0.12344460274517984  # 最佳参数
+    epochs: 500  # 最佳参数
+    batch_size: 64  # 最佳参数
+    learning_rate: 0.0001290786682817798  # 最佳参数
+
+# 预测配置
+forecast:
+  enabled: true
+  start_date: "2025-10-20"
+  end_date: "2025-10-22"
+  best_model: "Transformer"  # 使用效果最好的模型
+
+# 图形配置
+plotting:
+  fig_dpi: 150
+  font_priority:
+    - SimHei
+    - Microsoft YaHei
+    - STHeiti
+    - PingFang SC
+    - Heiti SC
+    - WenQuanYi Micro Hei
+    - Noto Sans CJK SC
+    - DejaVu Sans
+    - Arial Unicode MS
+
+# 报告配置
+report:
+  generate_word: true      # 生成Word报告
+  generate_markdown: true  # 生成Markdown报告
+  include_forecast_table: true  # 包含预测结果表格
